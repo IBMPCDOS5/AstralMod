@@ -1,7 +1,7 @@
 /****************************************
  * 
  *   AstralMod: Moderation bot for AstralPhaser Central and other Discord servers
- *   Copyright (C) 2017 Victor Tran and Rylan Arbour
+ *   Copyright (C) 2017 Victor Tran
  *
  *   This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -18,169 +18,1181 @@
  * 
  * *************************************/
 
-const amVersion = "1.1.1";
+var amVersion;
+if (process.argv.indexOf("--blueprint") == -1) {
+    amVersion = "2.2.0";
+    global.prefix = "am:";
+} else {
+    amVersion = "Blueprint";
+    global.prefix = "am#";
+}
 
 const Discord = require('discord.js');
-const api = require('./keys.js');
+const consts = require('./consts.js');
 const fs = require('fs');
+const readline = require('readline');
+const events = require('events');
+const blessed = require('blessed');
+const moment = require('moment');
+const http = require('http');
+const crypto = require('crypto');
 const client = new Discord.Client();
 
-var expletiveFilter = false;
-var doModeration = {};
-var panicMode = {};
-var lastMessages = {};
-var sameMessageCount = {};
-var smallMessageCount = {};
-var lastUserInteraction = {};
-var pendingNicks = {};
-var pendingNickTimeout = {};
-var suggestStates = {};
-var poweroff = false;
-var interrogMember = null;
-var bulletinTimeout;
-var runningCommands = true;
-var bananaFilter = false;
+const keys = require('./keys.js');
+const cipherAlg = "aes-256-ctr";
 
-var allowPrepChat = true;
-var membersPlaced = [];
-var numberOfMembersTried = 0;
+const commandEmitter = new events.EventEmitter();
+var plugins = {};
 
+/** @type{Object} */
+global.settings = null;
+var listening = true;
+
+var nickTimeouts = {};
+
+//Variables for the deal command
 var actionMember = {};
 var actioningMember = {};
 var actionStage = {};
 var actionToPerform = {};
 
-var dispatcher;
-var connection;
+var lockBox = [];
 
-const suggestionStartMessage =  "**Make a suggestion**\n" +
-                                "Welcome to the suggestion process! Please read this before you continue.\n" +
-                                "Here's how this will work.\n\n" +
-                                "- I'll walk you through the process of creating a suggestion on the suggestions channel.\n" +
-                                "- Just respond to my prompts by typing a message in this DM and sending it.\n" +
-                                "- At any time, simply respond with `q` to cancel the suggestion.\n\n" +
-                                "However, please be aware of the following:\n" +
-                                "- Your Discord Username will be recorded and sent along with the suggestion.\n" +
-                                "- Your suggestion will be publicly visible.\n" +
-                                "- Any misuse of this command, including (but not limited to) spam will lead to appropriate discipline from staff.\n\n" +
-                                "**Here are some things not to suggest because they will be immediately declined.** This counts as misuse of the suggest command, so hit `q` now if you were going to suggest one of these.\n" +
-                                "- New text/voice channels.\n" +
-                                "- Anything to do with AstralMod. For that, head to <https://github.com/vicr123/AstralMod> and file a bug report.\n" +
-                                "- New bots.\n\n" +
-                                "Wait 30 seconds, and then respond with `y` if you understood the above."
+var banCounts = {};
 
-function setGame() {
-    var presence = {};
-    presence.game = {};
-    presence.status = "online";
-    presence.afk = false;
-    
-    
-    switch (Math.floor(Math.random() * 1000) % 35) {
-        case 0:
-            presence.game.name = "with ban buttons";
-            break; //SCRUATCHO
-        case 1:
-            presence.game.name = "Fighting JXBot";
-            break;
-        case 2:
-            presence.game.name = "Annoy Victor";
-            break;
-        case 3:
-            presence.game.name = "with an internal bug";
-            break;
-        case 4:
-            presence.game.name = "around";
-            break;
-        case 5:
-            presence.game.name = "bot games";
-            break;
-        case 6:
-            presence.game.name = "with ones and zeroes";
-            break;
-        case 7:
-            presence.game.name = "thyShell";
-            break;
-        case 8:
-            presence.game.name = "with supa weapon";
-            break;
-        case 9:
-            presence.game.name = "solving puzzles";
-            break;
-        case 10:
-            presence.game.name = "rewinding time";
-            break;
-        case 11:
-            presence.game.name = "checking archives";
-            break;
-        case 12:
-            presence.game.name = "being unbreakable";
-            break;
-        case 13:
-            presence.game.name = "sandwiches";
-            break;
-        case 14:
-            presence.game.name = "drawing pokemon";
-            break;
-        case 15:
-            presence.game.name = "obsessing";
-            break;
-        case 16:
-            presence.game.name = "the waiting game";
-            break;
-        case 17:
-            presence.game.name = "bending space";
-            break;
-        case 18:
-            presence.game.name = "with hexagons";
-            break;
-        case 19:
-            presence.game.name = "with music";
-            break;
-        case 20:
-            presence.game.name = "being a ninja";
-            break;
-        case 21:
-            presence.game.name = "with Unicode characters";
-            break;
-        case 22:
-            presence.game.name = "bot:help for more info";
-            break;
-        case 26:
-            presence.game.name = "trying to DJ";
-            break;
-        case 27:
-	    presence.game.name = "Sausages";
-	    break;
-        case 28:
-	    presence.game.name = "59 6f 75 20 64 65 63 6f 64 65 64 20 74 68 69 73 20 6d 65 73 73 61 67 65 21";
-	    break;
-        case 29:
-        case 23:
-        case 24:
-        case 25:
-            presence.game.name = "v." + amVersion;
-            break;
-        case 30:
-            presence.game.name = "Locked and loaded!";
-            break;
-        case 31:
-            presence.game.name = "Android Pay";
-            break;
-        case 32:
-            presence.game.name = "translating English into Dutch";
-            break;
-        case 33:
-            presence.game.name = "translating Dutch into English";
-            break;
-        case 34:
-            presence.game.name = "Hallo hoe gaat het vandaag?";
-	    break;
-    }
-    client.user.setPresence(presence);
+var finalStdout = "";
+
+global.UserInputError = function() {
+    var temp = Error.apply(this, arguments);
+    temp.name = "UserInputError";
+    this.name = "UserInputError";
+    this.message = temp.message;
 }
 
-function getUserString(user) {
+UserInputError.prototype = Object.create(Error.prototype, {
+    constructor: {
+        value: UserInputError,
+        writable: true,
+        configurable: true
+    }
+});
+
+global.CommandError = function() {
+    var temp = Error.apply(this, arguments);
+    temp.name = "CommandError";
+    this.name = "CommandError";
+    this.message = temp.message;
+}
+
+CommandError.prototype = Object.create(Error.prototype, {
+    constructor: {
+        value: CommandError,
+        writable: true,
+        configurable: true
+    }
+});
+
+global.getRandom = function() {
+    if (arguments.length == 1) {
+        if (typeof arguments[0] == Array) {
+            var random = Math.floor(Math.random() * 1000) % arguments[0].length;
+            return arguments[0][random];
+        }
+    } else {
+        var random = Math.floor(Math.random() * 1000) % arguments.length;
+        return arguments[random];
+    }
+}
+
+global.logType = {
+    debug: 0,
+    info: 1,
+    warning: 2,
+    critical: 3,
+    good: 4
+}
+
+//Set up screen
+var screen = blessed.screen({
+    smartCSR: true,
+    dockBorders: true
+});
+screen.title = 'AstralMod ' + amVersion;
+
+var titleBox = blessed.text({
+    top: "0",
+    left: "0",
+    width: "100%",
+    height: "1",
+    content: "AstralMod " + amVersion + " Console",
+    tags: true,
+    style: {
+        fg: 'black',
+        bg: 'white'
+    },
+    padding: {
+        left: 1
+    }
+});
+screen.append(titleBox);
+
+var logBox = blessed.log({
+    top: 1,
+    left: 0,
+    width: "100%",
+    height: "100%-4",
+    tags: true,
+    style: {
+        fg: 'white',
+        bg: 'black',
+        scrollbar: {
+            bg: 'white'
+        }
+    },
+    padding: {
+        left: 1 // ,
+        // bottom: 2
+    },
+    scrollable: true,
+    alwaysScroll: true,
+    scrollOnInput: true,
+    scrollbar: true //,
+    //clickable: true
+});
+screen.append(logBox);
+
+function clearBoxes() {
+    while (lockBox.length > 0) {
+        var box = lockBox.pop();
+        box.hide();
+        box.destroy();
+    }
+
+}
+
+logBox.on('click', function(mouse) {
+    var x = mouse.x;
+    var y = mouse.y;
+
+    //var line = logBox.getScreenLines()[y + 1];
+    var line = logBox.getBaseLine(y - 1);
+
+    //Remove escapes
+    while (line.indexOf("\x1b") != -1) {
+        var removeStart = line.indexOf("\x1b");
+        var removeEnd = line.indexOf("m", removeStart);
+        line = line.replace(line.slice(removeStart, removeEnd + 1), "");
+    }
+    //logBox.log(line);
+
+    //Get word around line
+    var previousSpace = line.lastIndexOf(" ", x - 2);
+    var nextSpace = line.indexOf(" ", x - 2);
+    
+    previousSpace++;
+
+    if (nextSpace == -1) {
+        nextSpace = line.length;// - previousSpace;
+    }
+    var word = line.substring(previousSpace, nextSpace);
+
+    if (word.startsWith("[")) word = word.substr(1);
+    if (word.endsWith("]")) word = word.substr(0, word.length - 2);
+    
+    var goUpwards = false;
+    var top = y + 1;
+    if (top + 7 > screen.height) {
+        top = y - 7;
+        goUpwards = true;
+    }
+
+    var left = x - 10;
+    if (left + 50 > screen.width) {
+        left = screen.width - 50;
+    } else if (left < 0) {
+        left = 0;
+    }
+
+    var boxOptions = {
+        top: top,
+        left: left,
+        width: 50,
+        style: {
+            fg: "black",
+            bg: "white",
+            border: {
+                fg: 'white',
+                bg: 'black'
+            }
+        },
+        border: {
+            type: "line"
+        },
+        padding: {
+            left: 2,
+            top: 1,
+            right: 2,
+            bottom: 1
+        }
+    };
+
+    clearBoxes();
+
+    //Determine type of object clicked
+    if (client.guilds.has(word)) {
+        //This is a guild
+        var guild = client.guilds.get(word);
+        var box = blessed.box(JSON.parse(JSON.stringify(boxOptions)));
+        box.content = "For Guild " + word + "\n" +
+                      "Name: " + guild.name;
+        box.height = 7;
+        screen.append(box);
+
+        if (goUpwards) {
+            boxOptions.top -= 6;
+        } else {
+            boxOptions.top += 6;
+        }
+
+        var moreInfoButton = blessed.button({
+            style: {
+                fg: "yellow",
+                bg: "blue"
+            }
+        });
+        moreInfoButton.content = "More Info";
+        moreInfoButton.left = 0;
+        moreInfoButton.top = 2;
+        moreInfoButton.width = 9;
+        moreInfoButton.height = 1;
+        moreInfoButton.on('click', function() {
+            clearBoxes();
+            renderScreen();
+
+            processConsoleInput("ginfo " + word);
+        });
+        box.append(moreInfoButton);
+
+        var membersButton = blessed.button({
+            style: {
+                fg: "yellow",
+                bg: "blue"
+            }
+        });
+        membersButton.content = "Members";
+        membersButton.left = 10;
+        membersButton.top = 2;
+        membersButton.width = 7;
+        membersButton.height = 1;
+        membersButton.on('click', function() {
+            clearBoxes();
+            renderScreen();
+
+            processConsoleInput("ginfom " + word);
+        });
+        box.append(membersButton);
+
+        var channelsButton = blessed.button({
+            style: {
+                fg: "yellow",
+                bg: "blue"
+            }
+        });
+        channelsButton.content = "Channels";
+        channelsButton.left = 18;
+        channelsButton.top = 2;
+        channelsButton.width = 8;
+        channelsButton.height = 1;
+        channelsButton.on('click', function() {
+            clearBoxes();
+            renderScreen();
+
+            processConsoleInput("ginfoc " + word);
+        });
+        box.append(channelsButton);
+
+        var bansButton = blessed.button({
+            style: {
+                fg: "yellow",
+                bg: "blue"
+            }
+        });
+        bansButton.content = "Bans";
+        bansButton.left = 27;
+        bansButton.top = 2;
+        bansButton.width = 4;
+        bansButton.height = 1;
+        bansButton.on('click', function() {
+            clearBoxes();
+            renderScreen();
+
+            processConsoleInput("ginfob " + word);
+        });
+        box.append(bansButton);
+
+        lockBox.push(box);
+    }
+
+    if (client.channels.has(word)) {
+        //This is a channel
+        var channel = client.channels.get(word);
+        var box = blessed.box(JSON.parse(JSON.stringify(boxOptions)));
+        box.content = "For Channel " + word + "\n" +
+                      "Name: " + channel.name;
+        box.height = 7;
+        screen.append(box);
+
+        if (goUpwards) {
+            boxOptions.top -= 6;
+        } else {
+            boxOptions.top += 6;
+        }
+
+        var moreInfoButton = blessed.button({
+            style: {
+                fg: "yellow",
+                bg: "blue"
+            }
+        });
+        moreInfoButton.content = "More Info";
+        moreInfoButton.left = 0;
+        moreInfoButton.top = 2;
+        moreInfoButton.width = 9;
+        moreInfoButton.height = 1;
+        moreInfoButton.on('click', function() {
+            clearBoxes();
+            renderScreen();
+
+            processConsoleInput("cinfo " + word);
+        });
+        box.append(moreInfoButton);
+
+        var sendButton = blessed.button({
+            style: {
+                fg: "yellow",
+                bg: "blue"
+            }
+        });
+        sendButton.content = "Send";
+        sendButton.left = 10;
+        sendButton.top = 2;
+        sendButton.width = 4;
+        sendButton.height = 1;
+        sendButton.on('click', function() {
+            clearBoxes();
+            renderScreen();
+
+            //processConsoleInput("cinfo " + word);
+            showTextBox();
+            textBox.setValue("> send " + word + " ");
+            renderScreen();
+        });
+        box.append(sendButton);
+        
+        lockBox.push(box);
+    }
+    
+    if (client.users.has(word)) {
+        //This is a user
+        var user = client.users.get(word);
+        var box = blessed.box(JSON.parse(JSON.stringify(boxOptions)));
+        box.content = "For User " + word + "\n" +
+                      "Name: " + user.username;
+        box.height = 7;
+        screen.append(box);
+
+        if (goUpwards) {
+            boxOptions.top -= 6;
+        } else {
+            boxOptions.top += 6;
+        }
+        
+        lockBox.push(box);
+    }
+    
+    if (plugins.hasOwnProperty(word)) {
+        //This is a plugin
+        var plugin = plugins[word];
+        var box = blessed.box(JSON.parse(JSON.stringify(boxOptions)));
+        box.content = "For Plugin \"" + plugin.name + "\"\n" +
+                      "Filename: " + word;
+        box.height = 7;
+        screen.append(box);
+
+        if (goUpwards) {
+            boxOptions.top -= 6;
+        } else {
+            boxOptions.top += 6;
+        }
+
+        var unloadButton = blessed.button({
+            style: {
+                fg: "yellow",
+                bg: "blue"
+            }
+        });
+        unloadButton.content = "Unload";
+        unloadButton.left = 0;
+        unloadButton.top = 2;
+        unloadButton.width = 6;
+        unloadButton.height = 1;
+        unloadButton.on('click', function() {
+            clearBoxes();
+            renderScreen();
+
+            processConsoleInput("unload " + word);
+        });
+        box.append(unloadButton);
+
+        var reloadButton = blessed.button({
+            style: {
+                fg: "yellow",
+                bg: "blue"
+            }
+        });
+        reloadButton.content = "Reload";
+        reloadButton.left = 7;
+        reloadButton.top = 2;
+        reloadButton.width = 6;
+        reloadButton.height = 1;
+        reloadButton.on('click', function() {
+            clearBoxes();
+            renderScreen();
+
+            processConsoleInput("reload " + word);
+        });
+        box.append(reloadButton);
+
+        lockBox.push(box);
+    }
+
+    if (word == "save" || word == "plugins" || word == "vacuum" || word == "guilds" || word == "exit") {
+        processConsoleInput(word);
+    }
+
+    screen.render();
+});
+
+var textBox = blessed.textbox({
+    top: "100%-3",
+    left: -1,
+    width: "100%+2",
+    height: 3,
+    tags: true,
+    value: "> ",
+    border: {
+        type: "line"
+    },
+    style: {
+        fg: 'white',
+        bg: 'black',
+        border: {
+            fg: 'white',
+            bg: 'black'
+        }
+    },
+    inputOnFocus: true
+});
+screen.append(textBox);
+
+var keyBox = blessed.box({
+    top: "100%-1",
+    left: "0",
+    width: "100%",
+    height: 1,
+    tags: true,
+    style: {
+        fg: 'black',
+        bg: 'white'
+    },
+    padding: {
+        left: 1
+    }
+});
+screen.append(keyBox);
+
+var guildsButton = blessed.button({
+    style: {
+        fg: "yellow",
+        bg: "blue"
+    },
+    content: "^G Guilds",
+    left: 10,
+    width: 9,
+    height: 1,
+    top: "100%-1"
+});
+guildsButton.on('click', function() {
+    processConsoleInput("guilds");
+});
+screen.append(guildsButton);
+
+var pluginsButton = blessed.button({
+    style: {
+        fg: "yellow",
+        bg: "blue"
+    },
+    content: "^P Plugins",
+    left: 20,
+    width: 10,
+    height: 1,
+    top: "100%-1"
+});
+pluginsButton.on('click', function() {
+    processConsoleInput("plugins");
+});
+screen.append(pluginsButton);
+
+textBox.key('C-c', function(ch, key) {
+    shutdown();
+});
+
+screen.key('C-c', function() {
+    shutdown();
+});
+
+screen.key('C-g', function() {
+    processConsoleInput("guilds");
+});
+
+screen.key('C-p', function() {
+    processConsoleInput("plugins");
+});
+
+screen.key('up', function() {
+    logBox.scroll(-1);
+    renderScreen();
+});
+
+screen.on('keypress', function(key) {
+    if (lockBox.length != 0) {
+        clearBoxes();
+    } else if (key != undefined && !textBox.focused && key != "\r") {
+        showTextBox();
+
+        if (key != ":") {
+            textBox.setValue("> " + key);
+        }
+    }
+});
+
+screen.key('pageup', function() {
+    logBox.scroll(-logBox.height);
+    renderScreen();
+});
+
+screen.key('down', function() {
+    logBox.scroll(1);
+    renderScreen();
+});
+
+screen.key('pagedown', function() {
+    logBox.scroll(logBox.height);
+    renderScreen();
+});
+
+function showTextBox() {
+    logBox.height = "100%-4";
+    keyBox.content = "ESC Cancel Command   ENTER Issue Command";
+    textBox.show();
+    textBox.focus();
+    guildsButton.hide();
+    pluginsButton.hide();
+
+    renderScreen();
+}
+
+var currentHistoryEntry = -1;
+function hideTextBox() {
+    textBox.setValue("> ");
+    logBox.height = "100%-2";
+    keyBox.content = "^C Exit                          To issue a command, just start typing away.";
+    textBox.hide();
+    logBox.focus();
+    guildsButton.show();
+    pluginsButton.show();
+    currentHistoryEntry = -1;
+
+    renderScreen();
+}
+
+textBox.key("up", function() {
+    currentHistoryEntry++;
+    if (commandHistory[currentHistoryEntry] != null) {
+        textBox.setValue("> " + commandHistory[currentHistoryEntry]);
+    } else {
+        currentHistoryEntry = -1;
+        textBox.setValue("> ");
+    }
+    renderScreen();
+});
+
+textBox.key("down", function() {
+    currentHistoryEntry--
+    if (commandHistory[currentHistoryEntry] != null) {
+        textBox.setValue("> " + commandHistory[currentHistoryEntry]);
+    } else {
+        currentHistoryEntry = -1;
+        textBox.setValue("> ");
+    }
+    renderScreen();
+});
+
+textBox.on("cancel", function() {
+    hideTextBox();
+});
+
+function renderScreen() {
+    screen.render();
+}
+
+renderScreen();
+hideTextBox();
+
+console.error = function(data, ...args){
+    log(data, logType.warning);
+};
+
+global.log = function(logMessage, type = logType.debug) {
+    if (logMessage == null) {
+        return;
+    }
+
+    //Log a message to the console
+    if (type == logType.debug) {
+        if (process.argv.indexOf("--debug") == -1) {
+            return;
+        }
+    }
+
+    var logFormatting;
+    var logString;
+    
+    var lines = logMessage.split("\n");
+
+    for (i = 0; i < lines.length; i++) {
+        switch (type) {
+            case logType.debug:
+                if (i == 0) {
+                    logString = "[ ] ";
+                } else if (i == lines.length - 1) {
+                    logString = " └─ ";
+                } else {
+                    logString = " ├─ ";
+                }
+                logString += lines[i];
+                logFormatting = "\x1b[1m\x1b[34m";
+                break;
+            case logType.info:
+                if (i == 0) {
+                    logString = "[i] ";
+                } else if (i == lines.length - 1) {
+                    logString = " └─ ";
+                } else {
+                    logString = " ├─ ";
+                }
+                logString += lines[i];
+                logFormatting = "\x1b[1m\x1b[37m";
+                break;
+            case logType.warning:
+                if (i == 0) {
+                    logString = "[!] ";
+                } else if (i == lines.length - 1) {
+                    logString = " └─ ";
+                } else {
+                    logString = " ├─ ";
+                }
+                logString += lines[i];
+                logFormatting = "\x1b[1m\x1b[33m";
+                break;
+            case logType.critical:
+                if (i == 0) {
+                    logString = "[X] ";
+                } else if (i == lines.length - 1) {
+                    logString = " └─ ";
+                } else {
+                    logString = " ├─ ";
+                }
+                logString += lines[i];
+                logFormatting = "\x1b[1m\x1b[31m";
+                break;
+            case logType.good:
+                if (i == 0) {
+                    logString = "[>] ";
+                } else if (i == lines.length - 1) {
+                    logString = " └─ ";
+                } else {
+                    logString = " ├─ ";
+                }
+                logString += lines[i];
+                logFormatting = "\x1b[1m\x1b[32m";
+                break;
+        }
+
+        var logOutput = logFormatting + logString + "\x1b[0m";
+        
+        logBox.log("[" + new Date().toLocaleTimeString("us", {
+            hour12: false
+        }) + "] " + logOutput);
+        renderScreen();
+    }
+}
+
+global.logPromiseRejection = function(object, action) {
+    log("Couldn't delete message " + object.id + " in channel " + object.channel.id, logType.warning);
+};
+
+process.on('unhandledRejection', function(err, p) {
+    log(err.stack, logType.critical);
+});
+
+process.on('uncaughtException', function(err) {
+    //Uncaught Exception
+
+    if (err.code == "ECONNRESET") {
+        log("Uncaught Exception: ECONNRESET", logType.critical);
+        log(err.stack, logType.critical);
+    } else {
+        log("Uncaught Exception:", logType.critical);
+        log(err.stack, logType.critical);
+    }
+});
+
+var stdinInterface = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    terminal: false
+});
+
+var commandHistory = [];
+
+function processConsoleInput(line) {
+    commandHistory.unshift(line);
+
+    logBox.log(line);
+
+    const memberLine = function(member) {
+        var line = member.id + "  " + member.user.tag;
+        if (member.nickname != null) {
+            line += " [" + member.nickname + "]";
+        }
+        if (member.user.bot) {
+            line += " \x1b[46m[BOT]";
+        }
+        return line;
+    };
+
+    var lLine = line.toLowerCase();
+    if (lLine == "help") {
+        var help = "AstralMod Console Commands:\n" +
+                   "save                    Saves AstralMod configuration settings to disk. This happens every 30 seconds.\n" +
+                   "loadunenc [filename]    Loads an unencrypted settings.json file from disk.\n" +
+                   "dumpsettings            Prints the settings file contents, unencrypted, to the console\n" +
+                   "plugins                 List loaded plugins\n" +
+                   "load [plugin]           Loads a plugin into AstralMod\n" +
+                   "unload [plugin]         Unloads a plugin from AstralMod\n" +
+                   "reload [plugin]         Unloads and then loads a plugin into AstralMod\n" +
+                   "broadcast [message]     Broadcasts a message to every server AstralMod is connected to\n" +
+                   "vacuum                  Check the AstralMod Configuration File for errors\n" +
+                   "reconnect               Attempts to disconnect and reconnect to Discord\n" +
+                   "guilds                  Lists guilds AstralMod knows about\n" +
+                   "ginfo [guildid]         Shows information about a guild\n" +
+                   "ginfom [guildid]        Shows members inside a guild\n" +
+                   "ginfoc [guildid]        Shows channels inside a guild\n" +
+                   "ginfob [guildid]        Shows bans of a guild\n" +
+                   "cinfo [channelid]       Finds a channel by its ID\n" +
+                   "exit                    Exits AstralMod";
+        log(help, logType.info);
+    } else if (lLine == "exit") {
+        shutdown();
+    } else if (lLine == "loadunenc") {
+        log("Usage: loadunenc [filename]", logType.critical);
+    } else if (lLine.startsWith("loadunenc ")) {
+        var file = line.substr(10);
+        try {
+            var json = fs.readFileSync(file, "utf8");
+            var object = JSON.parse(json);
+            if (object != null) {
+                settings = object;
+                fs.unlink(file);
+                log("Settings loaded successfully, and the file has been deleted from disk. Please use the vacuum command now.", logType.good);
+            }
+        } catch (err) {
+            log("Couldn't load settings", logType.critical);
+        }
+    } else if (lLine == "dumpsettings") {
+        log(JSON.stringify(settings, null, 4), logType.info);
+    } else if (lLine == "plugins") {
+        var pluginsList = "Loaded plugins:";
+        for (plugin in plugins) {
+            pluginsList += "\n" + plugin;
+        }
+        log(pluginsList, logType.info);
+    } else if (lLine.startsWith("unload ")) {
+        unloadPlugin(line.substr(7));
+        log("Plugin " + line.substr(7) + " unloaded.", logType.good);
+    } else if (lLine == "unload") {
+        log("Usage: unload [filename]", logType.critical);
+    } else if (lLine.startsWith("load ")) {
+        if (loadPlugin(line.substr(5))) {
+            log("Plugin " + line.substr(5) + " loaded.", logType.good);
+        }
+    } else if (lLine == "load") {
+        log("Usage: load [filename]", logType.critical);
+    } else if (lLine.startsWith("reload ")) {
+        unloadPlugin(line.substr(7));
+        log("Plugin " + line.substr(7) + " unloaded.", logType.good);
+        if (loadPlugin(line.substr(7))) {
+            log("Plugin " + line.substr(7) + " loaded.", logType.good);
+        }
+    } else if (lLine == "reload") {
+        log("Usage: reload [filename]", logType.critical);
+    } else if (lLine == "save") {
+        saveSettings(true);
+    } else if (lLine == "reconnect") {
+        if (keys.key != null) {
+            client.login(keys.key).catch(function() {
+                log("Couldn't establish a connection to Discord.", logType.critical);
+            });
+        } else {
+            log("Couldn't find token", logType.critical);
+        }
+    } else if (lLine.startsWith("broadcast ")) {
+        //Broadcast message to each server in either #general or the bot warnings general
+        var broadcast = line.substr(10);
+        log("Broadcasting message: " + broadcast, logType.info);
+
+        //Iterate over each server
+        for (key in settings.guilds) {
+            var guildSetting = settings.guilds[key];
+            var guild = client.guilds.get(key);
+
+            if (guildSetting != null) {
+                var channel = null;
+                if (guildSetting.botWarnings != null) {
+                    if (guild != null) {
+                        channel = guild.channels.get(guildSetting.botWarnings);
+                    }
+                }
+
+                if (channel == null) {
+                    if (guild != null) {
+                        channel = guild.defaultChannel;
+                    }
+                }
+
+                if (channel != null) {
+                    channel.send("SERVICE ANNOUNCEMENT: " + broadcast);
+                }
+            }
+        }
+        log("Broadcasting message complete", logType.good);
+    } else if (lLine == "broadcast") {
+        log("Usage: broadcast message", logType.critical);
+    } else if (lLine == "vacuum") {
+        vacuumSettings();
+    } else if (lLine.startsWith("cinfo ")) {
+        var channelId = line.substr(6);
+        var channel = client.channels.get(channelId);
+        if (channel == null) {
+            log("Unknown channel.", logType.info);
+        } else {
+            var info = "Information for channel " + channelId + ":\n" +
+                       "Name: " + channel.name + "\n" +
+                       "Guild: " + channel.guild.name + " [" + channel.guild.id + "]";
+            log(info, logType.info);
+        }
+    } else if (lLine == "cinfo") {
+        log("Usage: cinfo [channelid]", logType.critical);
+    } else if (lLine == "guilds") {
+        var response = "Guilds AstralMod is connected to:";
+
+        for ([id, guild] of client.guilds) {
+            response += "\n" + guild.id + "  " + guild.name + "";
+        }
+
+        log(response, logType.info);
+    } else if (lLine.startsWith("ginfo ")) {
+        var guildLine = line.substr(6);
+        var guild = client.guilds.get(guildLine);
+        if (guild == null) {
+            log("Unknown guild.", logType.info);
+        } else {
+            var info = "Information for guild " + guildLine + ":\n" +
+                       "Name: " + guild.name + "\n" +
+                       "Owner: " + memberLine(guild.owner) + "\n" +
+                       "Members: " + parseInt(guild.memberCount) + "\n" +
+                       "Channels: " + parseInt(guild.channels.size);
+            log(info, logType.info);
+        }
+    } else if (lLine.startsWith("ginfom ")) {
+        var guildLine = line.substr(7);
+        var guild = client.guilds.get(guildLine);
+        if (guild == null) {
+            log("Unknown guild.", logType.info);
+        } else {
+            var info = "Information for guild " + guildLine + ":\n" +
+                       "Members: " + parseInt(guild.memberCount);
+            
+            for ([id, member] of guild.members) {
+                info += "\n" + memberLine(member);
+            }
+            
+            log(info, logType.info);
+        }
+    } else if (lLine.startsWith("ginfoc ")) {
+        var guildLine = line.substr(7);
+        var guild = client.guilds.get(guildLine);
+        if (guild == null) {
+            log("Unknown guild.", logType.info);
+        } else {
+            var info = "Information for guild " + guildLine + ":\n" +
+                       "Members: " + parseInt(guild.channels.size);
+            
+            for ([id, channel] of guild.channels) {
+                info += "\n" + channel.id + " " + (channel.type == "text" ? "#" : " ") + channel.name;
+            }
+            
+            log(info, logType.info);
+        }
+    } else if (lLine.startsWith("ginfob ")) {
+        var guildLine = line.substr(7);
+        var guild = client.guilds.get(guildLine);
+        if (guild == null) {
+            log("Unknown guild.", logType.info);
+        } else {
+            guild.fetchBans().then(function(bans) {
+                var info = "Information for guild " + guildLine + ":\n" +
+                        "Bans: " + parseInt(bans.size);
+                
+                for ([id, user] of bans) {
+                    info += "\n" + user.id + " " + user.username + "#" + user.discriminator;
+                }
+                
+                log(info, logType.info);
+            }).catch(function() {
+                log("Couldn't fetch bans for that guild.", logType.critical);
+            });
+        }
+    } else if (lLine.startsWith("send ")) {
+        var args = line.substr(5);
+
+        var split = args.indexOf(" ");
+        if (split == -1) {
+            log("Usage: send [channelid] [message]", logType.critical);
+        } else {
+            var message = args.substr(split + 1);
+            var channel = args.substr(0, split);
+
+            var dChannel = client.channels.get(channel);
+            if (dChannel == null) {
+                log("Couldn't find that channel.", logType.critical);
+            } else {
+                dChannel.send(message);
+                log("Sent.", logType.good);
+            }
+        }
+    } else if (lLine == "send") {
+        log("Usage: send [channelid] [message]", logType.critical);
+    } else if (lLine == "ginfo") {
+        log("Usage: ginfo [guildid]", logType.critical);
+    } else {
+        log("Unknown command. For help, type \"help\" into the console.", logType.critical);
+    }
+}
+
+textBox.on("submit", function() {
+    //Input received!
+    var line = textBox.getText().substr(2);
+    hideTextBox();
+
+    processConsoleInput(line);
+});
+
+textBox.key('backspace', function() {
+    var line = textBox.getText();
+    if (!line.startsWith("> ")) {
+        if (line == ">") {
+            line = "> ";
+        } else if (line.startsWith(" ")) {
+            line = "> " + line.substring(1);
+        } else {
+            line = "> " + line;
+        }
+        textBox.setValue(line);
+    }
+});
+
+textBox.key('tab', function() {
+    //Autocomplete!
+
+    var line = textBox.getText().substr(2, textBox.getText().length - 6);
+    textBox.setValue("> " + line);
+    var lLine = line.toLowerCase();
+
+    if (lLine.startsWith("ginfo ")) {
+        var guildLine = line.substr(6);
+        var guilds = [];
+        for ([id, guild] of client.guilds) {
+            var id = guild.id;
+            if (id.startsWith(guildLine)) {
+                guilds.push(guild.id);
+            }
+        }
+        
+        if (guilds.length == 1) {
+            textBox.setValue("> ginfo " + guilds[0]);
+        } else if (guilds.length == 0) {
+            log("No results.", logType.info)
+        } else {
+            var acOutput = "";
+            for (guild of guilds) {
+                acOutput += guild + " ";
+            }
+            log(acOutput, logType.info);
+        }
+    } else if (lLine.startsWith("ginfom ")) {
+        var guildLine = line.substr(7);
+        var guilds = [];
+        for ([id, guild] of client.guilds) {
+            var id = guild.id;
+            if (id.startsWith(guildLine)) {
+                guilds.push(guild.id);
+            }
+        }
+        
+        if (guilds.length == 1) {
+            textBox.setValue("> ginfom " + guilds[0]);
+        } else if (guilds.length == 0) {
+            log("No results.", logType.info)
+        } else {
+            var acOutput = "";
+            for (guild of guilds) {
+                acOutput += guild + " ";
+            }
+            log(acOutput, logType.info);
+        }
+    } else if (lLine.startsWith("ginfoc ")) {
+        var guildLine = line.substr(7);
+        var guilds = [];
+        for ([id, guild] of client.guilds) {
+            var id = guild.id;
+            if (id.startsWith(guildLine)) {
+                guilds.push(guild.id);
+            }
+        }
+        
+        if (guilds.length == 1) {
+            textBox.setValue("> ginfoc " + guilds[0]);
+        } else if (guilds.length == 0) {
+            log("No results.", logType.info)
+        } else {
+            var acOutput = "";
+            for (guild of guilds) {
+                acOutput += guild + " ";
+            }
+            log(acOutput, logType.info);
+        }
+    } else if (lLine.startsWith("ginfob ")) {
+        var guildLine = line.substr(7);
+        var guilds = [];
+        for ([id, guild] of client.guilds) {
+            var id = guild.id;
+            if (id.startsWith(guildLine)) {
+                guilds.push(guild.id);
+            }
+        }
+        
+        if (guilds.length == 1) {
+            textBox.setValue("> ginfob " + guilds[0]);
+        } else if (guilds.length == 0) {
+            log("No results.", logType.info)
+        } else {
+            var acOutput = "";
+            for (guild of guilds) {
+                acOutput += guild + " ";
+            }
+            log(acOutput, logType.info);
+        }
+    } else if (lLine.startsWith("send ")) {
+        var channelLine = line.substr(5);
+        if (channelLine.indexOf(" ") == -1) {
+            var channels = [];
+            for ([id, channel] of client.channels) {
+                var id = channel.id;
+                if (id.startsWith(channelLine)) {
+                    channels.push(channel.id);
+                }
+            }
+            
+            if (channels.length == 1) {
+                textBox.setValue("> send " + channels[0] + " ");
+            } else if (channels.length == 0) {
+                log("No results.", logType.info)
+            } else {
+                var acOutput = "";
+                for (channel of channels) {
+                    acOutput += channel + " ";
+                }
+                log(acOutput, logType.info);
+            }
+        }
+    } else if (lLine.startsWith("cinfo ")) {
+        var channelLine = line.substr(6);
+        if (channelLine.indexOf(" ") == -1) {
+            var channels = [];
+            for ([id, channel] of client.channels) {
+                var id = channel.id;
+                if (id.startsWith(channelLine)) {
+                    channels.push(channel.id);
+                }
+            }
+            
+            if (channels.length == 1) {
+                textBox.setValue("> cinfo " + channels[0]);
+            } else if (channels.length == 0) {
+                log("No results.", logType.info)
+            } else {
+                var acOutput = "";
+                for (channel of channels) {
+                    acOutput += channel + " ";
+                }
+                log(acOutput, logType.info);
+            }
+        }
+    } else {
+        log("Command autocompletion coming soon.", logType.info);
+        //TODO: Command autocompletion
+    }
+});
+
+function shutdown() {
+    if (global.settings != null) {
+        log("Saving settings...");
+        try {
+            var contents = JSON.stringify(settings, null, 4);
+
+            //Encrypt the contents
+            var cipher = crypto.createCipher(cipherAlg, keys.settingsKey);
+            var settingsJson = Buffer.concat([cipher.update(Buffer.from(contents, "utf8"), cipher.final())]);
+
+            fs.writeFileSync("settings.json", settingsJson, "utf8");
+            log("Settings saved!", logType.good);
+        } catch (exception) {
+            log("Settings couldn't be saved. You may lose some settings.", logType.critical);
+        }
+    }
+
+    log("Now exiting AstralMod.", logType.good);
+    process.exit(0);
+}
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
+
+log("Welcome to AstralMod!", logType.good);
+
+global.getUserString = function(user) {
     var u = user;
     if (user.user != null) {
         u = user.user;
@@ -188,213 +1200,1224 @@ function getUserString(user) {
     return u.tag;
 }
 
-function handleSuggest(message) {
-    var state = suggestStates[message.author.id];
-    if (state.lastEmbed != null) {
-        state.lastEmbed.delete();
-        state.lastEmbed = null;
+global.parseUser = function(query) {
+    if (query.startsWith("<@!") && query.endsWith(">")) {
+        query = query.substr(3);
+        query = query.slice(0, -1);
+    } else if (query.startsWith("<@") && query.endsWith(">")) {
+        query = query.substr(2);
+        query = query.slice(0, -1);
+    }
+    var searchResults = [];
+
+    for (let [snowflake, user] of client.users) {
+        if (user.username.toLowerCase() == query.toLowerCase()) {
+            searchResults.unshift(user);
+        } else if (user.username.toLowerCase().indexOf(query.toLowerCase()) != -1) {
+            searchResults.push(user);
+        } else if (user.id == query) {
+            searchResults.unshift(user);
+        }
     }
 
-    if (message.content.toLowerCase() == "q") {
-        //Abort
-        
-        var embed = new Discord.RichEmbed("test");
-        embed.setAuthor("[CANCELLED]");
-        embed.setColor("#FF0000");
-        embed.setDescription("\u200B");
-        
-        var title;
-        if (state.title == null) {
-            title = "~~Title~~";
-        } else {
-            title = "~~" + state.title + "~~";
-        }
-
-        var suggestion;
-        if (state.suggestion == null) {
-            suggestion = "~~Suggestion~~";
-        } else {
-            suggestion = "~~" + state.suggestion + "~~";
-        }
-
-        embed.addField(title, suggestion);
-        
-        message.author.send("", {embed: embed});
-        
-        message.author.send(":octagonal_sign: Suggestion process cancelled.");
-        state = null;
-    } else {
-        switch (state.state) {
-            case 1: //Welcome to the suggestion tool
-                if (message.content.toLowerCase() == "y") {
-                    if (state.startTime.getTime() + 30000 > (new Date()).getTime()) {
-                        message.author.send(":arrow_up: Before you can make a suggestion, you'll need to read the above carefully. Please take time to read it again, and then you can continue with your suggestion.");
-                    } else {
-                        //Continue
-                        state.state = 2;
-                        
-                        var embed = new Discord.RichEmbed("test");
-                        embed.setAuthor("Suggestion");
-                        embed.setColor("#00CA00");
-                        embed.setDescription("\u200B");
-                        
-                        if (state.suggestion == null) {
-                            embed.addField("__Title__\\_\\_\\_\\_\\_\\_\\_\\_\\_\\_\\_\\_\\_\\_\\_\\_\\_\\_\\_\\_", "Suggestion");
-                        } else {
-                            embed.addField("__Title__\\_\\_\\_\\_\\_\\_\\_\\_\\_\\_\\_\\_\\_\\_\\_\\_\\_\\_\\_\\_", state.suggestion);
-                        }
-                        
-                        embed.setFooter("User ID: " + message.author.id);
-                        message.author.send("", {embed: embed}).then(function(message) {
-                            state.lastEmbed = message;
-                        });
-                        
-                        message.author.send("What's the title for this suggestion? It'll need to be 30 characters or less.");
-                    }
-                } else {
-                    //Abort
-                    message.author.send(":octagonal_sign: Suggestion process cancelled.");
-                    state = null;
-                }
-                break;
-            case 2: //Title
-                if (message.content.length > 30) {
-                    message.author.send(":no_entry_sign: Your response needs to be 30 characters or less.");
-                } else if (containsExpletive(message.content)) {
-                    message.author.send(":no_entry_sign: This looks like spam. And we don't like spam. Unless it's in a can. Try again, and be a bit nicer please.");
-                } else if (message.content.length < 3) {
-                    message.author.send(":no_entry_sign: That title seems WAY too short. Make it a bit longer, please?");
-                } else {
-                    state.title = message.content;
-                    
-                    if (state.suggestion == null) {
-                        state.state = 3;
-                        
-                        var embed = new Discord.RichEmbed("test");
-                        embed.setAuthor("Suggestion");
-                        embed.setColor("#00CA00");
-                        embed.setDescription("\u200B");
-                        
-                        embed.addField(state.title, "__Suggestion__\\_\\_\\_\\_\\_\\_\\_\\_\\_\\_\\_\\_\\_\\_\\_");
-                        
-                        message.author.send("", {embed: embed}).then(function(message) {
-                            state.lastEmbed = message;
-                        });
-                    
-                        message.author.send("What is your suggestion? Be sure to be cohesive and to back your suggestion up with evidence.");
-                    } else {
-                        state.state = 4;
-
-                        var embed = new Discord.RichEmbed("test");
-                        embed.setAuthor("Suggestion");
-                        embed.setColor("#00CA00");
-                        embed.setDescription("\u200B");
-                        
-                        embed.addField(state.title, state.suggestion);
-                        
-                        message.author.send("", {embed: embed}).then(function(message) {
-                            state.lastEmbed = message;
-                        });
-
-                        message.author.send("Ready to submit this suggestion?");
-                    }
-                }
-                break;
-            case 3: //Suggestion
-                if (message.content.length > 1000) {
-                    message.author.send(":no_entry_sign: Your response needs to be 1000 characters or less.");
-                } else if (containsExpletive(message.content)) {
-                    message.author.send(":no_entry_sign: This looks like spam. And we don't like spam. Unless it's in a can. Try again, and be a bit nicer please.");
-                } else {
-                    state.suggestion = message.content;
-                    state.state = 4;
-
-                    var embed = new Discord.RichEmbed("test");
-                    embed.setAuthor("Suggestion");
-                    embed.setColor("#00CA00");
-                    embed.setDescription("\u200B");
-                    
-                    embed.addField(state.title, state.suggestion);
-                    
-                    message.author.send("", {embed: embed}).then(function(message) {
-                        state.lastEmbed = message;
-                    });
-
-                    message.author.send("Ready to submit this suggestion?");
-                }
-                break;
-            case 4: //Confirm
-                if (message.content.toLowerCase().startsWith("y")) {
-                    //Submit
-                    var embed = new Discord.RichEmbed("test");
-                    embed.setAuthor(message.author.username, message.author.displayAvatarURL);
-                    embed.setColor("#00CA00");
-                    
-                    embed.addField(state.title, state.suggestion);
-                    
-                    embed.setFooter("Submitted at " + new Date().toUTCString());
-                    
-                    var channel;
-                    if (state.guild == 277922530973581312) { //APHC
-                        channel = client.channels.get("308499752993947649");
-                    } else if (state.guild == 297057036292849680) { //ALA
-                        channel = client.channels.get("308547573382250497");
-                    }
-                    
-                    channel.send("", {embed: embed});
-                    state = null;
-                    message.author.send(":white_check_mark: OK: Your suggestion has been submitted to our staff. Thanks! :D");
-                } else if (message.content.toLowerCase() == "r" || message.content.toLowerCase() == "start over" || message.content.toLowerCase() == "retry" || message.content.toLowerCase() == "no" ||
-                            message.content.toLowerCase() == "restart") {
-                    state.state = 2;
-                    state.suggestion = null;
-                    state.startTime = new Date();
-                    message.author.send(suggestionStartMessage);
-                } else if (message.content.toLowerCase == "cancel") {//Abort
-                    var embed = new Discord.RichEmbed("test");
-                    embed.setAuthor("[CANCELLED]");
-                    embed.setColor("#FF0000");
-                    embed.setDescription("\u200B");
-                    
-                    var title;
-                    if (state.title == null) {
-                        title = "~~Title~~";
-                    } else {
-                        title = "~~" + state.title + "~~";
-                    }
-
-                    var suggestion;
-                    if (state.suggestion == null) {
-                        suggestion = "~~Suggestion~~";
-                    } else {
-                        suggestion = "~~" + state.suggestion + "~~";
-                    }
-
-                    embed.addField(title, suggestion);
-                    
-                    message.author.send("", {embed: embed});
-                    
-                    message.author.send(":octagonal_sign: Suggestion process cancelled.");
-                } else {
-                    message.author.send("Sorry, I didn't quite get that. Respond with `yes` or `retry`.");
-                }
-                break;
-        }
-    }
-    suggestStates[message.author.id] = state;
+    return searchResults;
 }
 
-function handleAction(message) {
+function setGame() {
+    var presence = {
+        game: {
+            type: 0
+        },
+        status: "online",
+        afk: false
+    };
+
+    presence.game.name = getRandom("with ban buttons",
+                                   "Fighting JXBot",
+                                   "Annoying Victor",
+                                   prefix + "help",
+                                   "v." + amVersion,
+                                   "v." + amVersion,
+                                   "Android Pay");
+    client.user.setPresence(presence);
+}
+
+function isMod(member) {
+    var modRoles = settings.guilds[member.guild.id].modRoles;
+    if (modRoles != null) {
+        for (role of modRoles) {
+            if (member.roles.has(role)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+global.uinfo = function(user, channel, guild = null, compact = false) {
+    channel.startTyping();
+    var member = null;
+    if (guild != null) {
+        for ([id, gMember] of guild.members) {
+            if (gMember.user.id == user.id) {
+                member = gMember;
+                break;
+            }
+        }
+
+        if (member == null) {
+            member = {
+                displayName: user.username,
+                tag: user.tag,
+                noGuild: true,
+                noGuildMessage: "This user is not part of this server."
+            }
+        }
+    } else {
+        member = {
+            displayName: user.username,
+            tag: user.tag,
+            noGuild: true,
+            noGuildMessage: "You are not allowed to view server specific information in this server."
+        }
+    }
+
+    var embed = new Discord.RichEmbed("uinfo");
+    embed.setAuthor(member.displayName, user.displayAvatarURL);
+    embed.setAuthor(getUserString(member), user.displayAvatarURL);
+    embed.setColor("#00FF00");
+    embed.setFooter("User ID: " + user.id);
+
+    if (compact) {
+        var msg = "Discriminator: " + user.discriminator + "\n" + 
+                    "Created at: " + user.createdAt.toUTCString() + "\n";
+
+        if (member.noGuild != true) {
+            if (member.joinedAt.toUTCString() == "Thu, 01 Jan 1970 00:00:00 GMT") {
+                msg += "Joined at: -∞... and beyond! Discord seems to be giving incorrect info... :(";
+            } else {
+                msg += "Joined at: " + member.joinedAt.toUTCString();
+            }
+        }
+        embed.setDescription(msg);
+    } else {
+        if (member.noGuild != true) {
+            embed.setDescription("User Information");
+        } else {
+            embed.setDescription(member.noGuildMessage);
+        }
+
+        {
+            var msg = "**Created** " + user.createdAt.toUTCString() + "\n";
+
+            if (member.noGuild != true) {
+                if (member.joinedAt.getTime() == 0) {
+                    msg += "**Joined** -∞... and beyond! Discord seems to be giving incorrect info... :(";
+                } else {
+                    msg += "**Joined** " + member.joinedAt.toUTCString();
+                }
+            }
+
+            embed.addField("Timestamps", msg);
+        }
+
+        var msg;
+        if (member.noGuild) {
+            msg = "**Username** " + user.username + "\n";
+
+            embed.addField("Names", msg);
+        } else {
+            msg = "**Current Display Name** " + member.displayName + "\n";
+            msg += "**Username** " + user.username + "\n";
+            if (member.nickname != null) {
+                msg += "**Nickname** " + member.nickname;
+            } else {
+                msg += "**Nickname** No nickname";
+            }
+
+            embed.addField("Names", msg);
+        }
+
+        {
+            var msg = "";
+
+            if (user.bot) {
+                msg += "- This user is a bot account.\n";
+            }
+
+            if (banCounts[user.id] != 0 && banCounts[user.id] != null) {
+                msg += "- This user has been banned from " + parseInt(banCounts[user.id]) + " servers known to AstralMod.";
+            }
+
+            if (msg != "") {
+                embed.addField("Alerts", msg);
+            }
+        }
+    }
+    channel.send("", {embed: embed});
+    channel.stopTyping();
+}
+
+function processModCommand(message) {
+    var text = message.content;
+    var lText = text.toLowerCase();
+
+    //Special cases
+    if (lText == prefix + "config") {
+        //Make sure person isn't configuring any other guild
+        for (key in settings.guilds) {
+            var guildSetting = settings.guilds[key];
+            if (guildSetting != null) {
+                if (guildSetting.configuringStage != 0) {
+                    if (guildSetting.configuringUser == message.author.id) {
+                        message.reply("You're already trying to configure `" + client.guilds.get(key).name + "`. Finish configuring that server first, and then you can configure this server.");
+                        return true;
+                    }
+                }
+            }
+        }
+
+        //Clear all user configuring for this user
+        for (key in settings.guilds) {
+            var guildSetting = settings.guilds[key];
+            if (guildSetting != null) {
+                if (guildSetting.configuringUser == message.author.id) {
+                    settings.guilds[key].configuringUser = null;
+                }
+            }
+        }
+
+        if (settings.guilds[message.guild.id].requiresConfig) {
+            if (message.author.id == consts.users.vicr123 || message.author.id == message.guild.owner.user.id) {
+                settings.guilds[message.guild.id].configuringUser = message.author.id;
+                settings.guilds[message.guild.id].configuringStage = 0;
+                message.author.send("Welcome to AstralMod! To start, let's get the roles of mods on the server. Enter the roles of mods on this server, seperated by a space.")
+                
+                var roles = "```";
+                for (let [id, role] of message.guild.roles) {
+                    roles += role.id + " = " + role.name + "\n";
+                }
+                roles += "```";
+                message.author.send(roles);
+
+                message.reply(":arrow_left: Continue in DMs.");
+                return true;
+            } else {
+                message.reply("You're not " + message.guild.owner.displayName);
+                return true;
+            }
+        } else {
+            //Configuration menu
+
+            //Make sure person has neccessary permissions
+            if (message.author.id == consts.users.vicr123 || message.author.id == message.guild.owner.user.id || message.member.hasPermission("ADMINISTRATOR")) {
+                settings.guilds[message.guild.id].configuringUser = message.author.id;
+                settings.guilds[message.guild.id].configuringStage = 0;
+                message.author.send(getSingleConfigureWelcomeText(message.guild));
+
+                message.reply(":arrow_left: Continue in DMs.");
+            }
+        }
+    } else if (lText == prefix + "poweroff") {
+        if (message.author.id == consts.users.vicr123 || message.author.id == consts.users.nebble) {
+            message.reply("AstralMod is now exiting.").then(function() {
+                shutdown();
+            });
+        }
+    }
+
+    if (isMod(message.member)) {
+        var command;
+        command = text.toLowerCase().substr(prefix.length);
+
+        if (command == "shoo") {
+            if (message.author.id == consts.users.vicr123 || message.author.id == message.guild.owner.user.id) {
+                message.reply(":arrow_left: And with that, POW! I'm gone!").then(function() {
+                    message.guild.leave();
+                    saveSettings();
+                });
+            } else {
+                message.reply(":arrow_left: Only the owner or vicr123 can use this command. Alternatively, if you have permissions to kick me, just do that.");
+            }
+            return true;
+        } else if (command.startsWith("declnick")) {
+            var userId = command.substr(9);
+            if (nickTimeouts[message.guild.id] != null) {
+                if (nickTimeouts[message.guild.id][userId] != null) {
+                    clearTimeout(nickTimeouts[message.guild.id][userId]);
+                    nickTimeouts[message.guild.id][userId] = null;
+                    message.channel.send(':white_check_mark: OK: User nickname change has been cancelled.');
+                } else {
+                    message.channel.send(':no_entry_sign: ERROR: That didn\'t work. Has 5 minutes passed?');
+                }
+            }
+            return true;
+        } else if (command.startsWith("deal ") || command.startsWith("manage ")) {
+            if (actioningMember[message.guild.id] != null) {
+                message.channel.send(':no_entry_sign: ERROR: ' + getUserString(actioningMember[message.guild.id]) + " is already managing another user.");
+            } else {
+                if (command.startsWith("deal")) {
+                    command = command.substr(5);
+                } else if (command.startsWith("manage")) {
+                    command = command.substr(7);
+                }
+                var memberID = command.replace("<", "").replace(">", "").replace("@", "").replace("!", "");
+
+                var users = parseUser(memberID);
+                if (users.length > 0) {
+                    var user = null;
+
+                    //Filter out members
+                    for (var i = 0; i < users.length; i++) {
+                        if (message.guild.members.has(users[i].id)) {
+                            user = users[i].id;
+                            i = users.length;
+                        }
+                    }
+
+                    if (user == null) {
+                        throw new CommandError("No user found with that name on this server");
+                    } else {
+                        var member = message.guild.member(user);
+                        if (member == null) {
+                            throw new CommandError("An internal error was encountered.");
+                        } else {
+                            if (member.highestRole.comparePositionTo(message.member.highestRole) >= 0) {
+                                throw new CommandError("You're not allowed to manage this user.");
+                            } else {
+                                var canDoActions = false;
+                                var msg = ':gear: ' + getUserString(member) + ": `cancel` ";
+                                if (member.kickable) {
+                                    msg += '`(k)ick` ';
+                                    canDoActions = true;
+                                }
+                                
+                                if (member.bannable) {
+                                    msg += '`(b)an` ';
+                                    canDoActions = true;
+                                }
+
+                                if (!member.highestRole.comparePositionTo(message.guild.me.highestRole) >= 0 && message.guild.me.hasPermission("MANAGE_NICKNAMES")) {
+                                    msg += '`(n)ick` ';
+                                    canDoActions = true;
+                                }
+                                
+                                if (message.guild.id == 287937616685301762 || message.guild.id == consts.aphc.id) {
+                                    msg += "`(i)nterrogate` ";
+                                    canDoActions = true;
+                                }
+                                
+                                if (message.guild.id == consts.aphc.id || message.guild.id == 263368501928919040) {
+                                    msg += "`(j)ail` ";
+                                    canDoActions = true;
+                                }
+                                
+                                if (message.guild.id == consts.aphc.id) {
+                                    msg += "`(m)ute` ";
+                                    canDoActions = true;
+                                }
+                                
+                                if (canDoActions) {
+                                    actionMember[message.guild.id] = member;
+                                    actioningMember[message.guild.id] = message.author;
+                                    actionStage[message.guild.id] = 0;
+                                    message.channel.send(msg);
+                                } else {
+                                    throw new CommandError("No actions can be perfomed on this user.");
+                                }
+                            }
+                        }
+                    }
+                } else {
+                        throw new CommandError("No user found with that name");
+                }
+            }
+            message.delete().catch(function() {
+                logPromiseRejection(message, "messageDelete");
+            });
+            return true;
+        }
+    }
+    return false;
+}
+
+function processAmCommand(message) {
+    var text = message.content;
+
+    //Make sure configuration is not required
+    if (settings.guilds[message.guild.id].requiresConfig && text != prefix + "config") {
+        message.reply("AstralMod setup isn't complete. You'll need to wait for " + message.guild.owner.displayName + " to type `" + prefix + "config` and set up AstralMod before you can use it.");
+    } else {
+        var command;/*
+        if (text.startsWith("am:")) {
+            command = text.toLowerCase().substr(3);
+        } else {
+            command = text.toLowerCase().substr(4);
+        }*/
+        command = text.toLowerCase().substr(prefix.length);
+
+        if (command == "ping") {
+            message.channel.send(getRandom('PONG! I want to play pong too... :\'(',
+                                           'PONG! I love playing pong!',
+                                           'PONG! Thanks for playing pong with me!',
+                                           'PONG!',
+                                           'Just going to break convention here and not start this reply normally.'));
+            message.delete().catch(function() {
+                logPromiseRejection(message, "messageDelete");
+            });
+            return true;
+        } else if (command == "nick") {
+            if (settings.guilds[message.guild.id].nickModeration) {
+                var nickResult = setNicknameTentative(message.member, "", message.guild);
+                if (nickResult == "cooldown") {
+                    message.reply("There is a one day cooldown between use of this command.");
+                } else if (nickResult == "length") {
+                    message.reply("Nicknames need to be less than 32 characters.");
+                } else {
+                    message.reply("Ok, give us a bit to make sure the mods are ok with that.");
+                }
+            } else {
+                message.reply("Nickname changes are not accepted on this server via AstralMod.");
+            }
+            return true;
+        } else if (command.startsWith("nick ")) {
+            if (settings.guilds[message.guild.id].nickModeration) {
+                var nickResult = setNicknameTentative(message.member, text.substr(8), message.guild);
+                if (nickResult == "cooldown") {
+                    message.reply("There is a one day cooldown between use of this command.");
+                } else if (nickResult == "length") {
+                    message.reply("Nicknames need to be less than 32 characters.");
+                } else {
+                    message.reply("Ok, give us a bit to make sure the mods are ok with that.");
+                }
+            } else {
+                message.reply("Nickname changes are not accepted on this server via AstralMod.");
+            }
+            return true;
+        } else if (command == "suggest") {
+            message.reply("Suggestions are coming soon. Stay tuned!");
+            return true;
+        } else if (command.startsWith("suggest ")) {
+            message.reply("Suggestions are coming soon. Stay tuned!");
+            return true;
+        } else if (command == "version") {
+            message.channel.send("**AstralMod " + amVersion + "**\nDiscord Bot");
+            return true;
+        } else if (command == "help") { //General help
+            var embed = new Discord.RichEmbed();
+            embed.setColor("#3C3C96");
+            embed.setAuthor("AstralMod Help Contents");
+            embed.setDescription("Here are some things you can try. For more information, just `" + prefix + "help [command]`");
+
+            embed.addField("AstralMod Core Commands", "**config**\n**shoo**\n**declnick**\n**deal**\nping\nnick\nfetchuser\nversion\nhelp", true);
+
+            for (key in plugins) {
+                var plugin = plugins[key];
+                if (plugin.availableCommands != null) {
+                    var commandsList = "";
+
+                    if (plugin.availableCommands.general != null) {
+                        if (plugin.availableCommands.general.modCommands != null) {
+                            for (command of plugin.availableCommands.general.modCommands) {
+                                commandsList += "**" + command + "**\n";
+                            }
+                        }
+
+                        if (plugin.availableCommands.general.commands != null) {
+                            for (command of plugin.availableCommands.general.commands) {
+                                commandsList += command + "\n";
+                            }
+                        }
+                    }
+
+                    if (plugin.availableCommands[message.guild.id] != null) {
+                        if (plugin.availableCommands[message.guild.id].modCommands != null) {
+                            for (command of plugin.availableCommands[message.guild.id].modCommands) {
+                                commandsList += "**" + command + "**\n";
+                            }
+                        }
+
+                        if (plugin.availableCommands[message.guild.id].commands != null) {
+                            for (command of plugin.availableCommands[message.guild.id].commands) {
+                                commandsList += command + "\n";
+                            }
+                        }
+                    }
+
+                    if (commandsList != "") {
+                        embed.addField(plugin.name, commandsList, true);
+                    }
+                }
+            }
+
+            embed.setFooter("AstralMod " + amVersion + ". Moderator commands denoted with bold text.");
+            message.channel.send("", { embed: embed });
+            return true;
+        } else if (command.startsWith("fetchuser ")) {
+            var user = command.substr(10);
+            client.fetchUser(user).then(function(dUser) {
+                message.channel.send("User " + dUser.tag + " fetched and cached.");
+            }).catch(function() {
+                message.channel.send("Couldn't fetch user.");
+            });
+            return true;
+        } else if (command.startsWith("help ")) { //Contextual help
+            //Get help for specific command
+            var embed = new Discord.RichEmbed();
+            embed.setAuthor("AstralMod Help Contents");
+
+            var helpCmd = command.substr(5);
+
+            var help = {};
+            switch (helpCmd) {
+                case "config":
+                    help.title = prefix + "config";
+                    help.helpText = "Configures AstralMod for this server";
+                    break;
+                case "shoo":
+                    help.title = prefix + "shoo";
+                    help.helpText = "Leave the server, purging all configuration";
+                    break;
+                case "declnick":
+                    help.title = prefix + "declnick";
+                    help.helpText = "Declines a nickname";
+                    break;
+                case "deal":
+                    help.title = prefix + "deal";
+                    help.usageText = prefix + "deal user";
+                    help.helpText = "Manages a user";
+                    help.param1 = "- The User ID of the user to manage\n" +
+                                  "- Mention of the user to manage";
+                    break;
+                case "ping":
+                    help.title = prefix + "ping";
+                    help.helpText = "Asks AstralMod to reply with a message";
+                    break;
+                case "version":
+                    help.title = prefix + "version";
+                    help.helpText = "Queries the current AstralMod version";
+                    break;
+                case "nick":
+                    help.title = prefix + "nick";
+                    help.usageText = prefix + "nick nickname";
+                    help.helpText = "Sets your nickname after staff have a chance to review it";
+                    help.param1 = "The nickname you wish to be known as";
+                    break;
+                case "fetchuser":
+                    help.title = prefix + "fetchuser";
+                    help.usageText = prefix + "fetchuser [ID]";
+                    help.helpText = "Tells AstralMod about the existance of a user";
+                    help.param1 = "The user ID you want to tell AstralMod about.";
+                    help.remarks = "AstralMod will search for users from all of Discord."
+                    break;
+                case "help":
+                    help.title = prefix + "help";
+                    help.usageText = prefix + "help [command]";
+                    help.helpText = "Acquire information about how to use AstralMod and any available commands";
+                    help.param1 = "*Optional Parameter*\n" +
+                                  "The command to acquire information about.\n" +
+                                  "If this parameter is not present, we'll list the available commands.";
+                    break;
+                default:
+                    //Look thorough plugins for help
+                    for (key in plugins) {
+                        var plugin = plugins[key];
+                        if (plugin.acquireHelp != null) {
+                            if (plugin.availableCommands != null) {
+                                if (plugin.availableCommands.general != null) {
+                                    if (plugin.availableCommands.general.modCommands != null) {
+                                        if (plugin.availableCommands.general.modCommands.indexOf(helpCmd) != -1) {
+                                            help = plugin.acquireHelp(helpCmd);
+                                            break;
+                                        } 
+                                    }
+
+                                    if (plugin.availableCommands.general.commands != null) {
+                                        if (plugin.availableCommands.general.commands.indexOf(helpCmd) != -1) {
+                                            help = plugin.acquireHelp(helpCmd);
+                                            break;
+                                        } 
+                                    }
+                                }
+
+                                if (plugin.availableCommands[message.guild.id] != null) {
+                                    if (plugin.availableCommands[message.guild.id].modCommands != null) {
+                                        if (plugin.availableCommands[message.guild.id].modCommands.indexOf(helpCmd) != -1) {
+                                            help = plugin.acquireHelp(helpCmd);
+                                            break;
+                                        } 
+                                    }
+
+                                    if (plugin.availableCommands[message.guild.id].commands != null) {
+                                        if (plugin.availableCommands[message.guild.id].commands.indexOf(helpCmd) != -1) {
+                                            help = plugin.acquireHelp(helpCmd);
+                                            break;
+                                        } 
+                                    }
+                                }
+                            }
+                        }
+                    }
+            }
+
+            if (help.helpText == null) {
+                embed.setColor("#FF0000");
+                embed.setDescription("Couldn't obtain help for that command.");
+            } else {
+                embed.setColor("#3C3C96");
+                if (help.title == null) {
+                    embed.setDescription("Command Help");
+                } else {
+                    embed.setDescription("for " + help.title)
+                }
+
+                if (help.usageText != null) {
+                    embed.addField("Usage", help.usageText);
+                }
+
+                embed.addField("Description", help.helpText);
+
+
+                if (help.options != null) {
+                    var options = "```";
+                    for (value of help.options) {
+                        options += value + "\n";
+                    }
+                    options += "```";
+                    embed.addField("Options", options);
+                }
+
+                if (help.param1 != null) {
+                    embed.addField("Parameter 1", help.param1);
+                }
+
+                if (help.param2 != null) {
+                    embed.addField("Parameter 2", help.param2);
+                }
+
+                if (help.param3 != null) {
+                    embed.addField("Parameter 3", help.param3);
+                }
+
+                if (help.remarks != null) {
+                    embed.addField("Remarks", help.remarks);
+                }
+            }
+            embed.setFooter("AstralMod " + amVersion);
+            message.channel.send("", { embed: embed });
+            return true;
+        } else if (command.startsWith("throw ")) {
+            var msg = command.substr(6);
+            throw new Error(msg);
+            return true;
+        }
+    }
+    return false;
+}
+
+function setNicknameTentative(member, nickname, guild) {
+    if (nickname.length >= 32) {
+        settings.guilds[guild.id].pendingNicks = pendingNicks;
+        return "length";
+    }
+
+    var pendingNicks = {};
+    if (settings.guilds[guild.id].pendingNicks != null) {
+        pendingNicks = settings.guilds[guild.id].pendingNicks;
+    }
+
+    if (pendingNicks.cooldowns == null) {
+        pendingNicks.cooldowns = {};
+    }
+
+    if (pendingNicks.cooldowns[member.user.id] == null) {
+        pendingNicks.cooldowns[member.user.id] = new Date().getTime() - 86400000;
+    }
+
+    if (new Date().getTime() > pendingNicks.cooldowns[member.user.id]) {
+        pendingNicks.cooldowns[member.user.id] = new Date().getTime() + 86400000;
+
+        if (nickTimeouts[guild.id] == null) {
+            nickTimeouts[guild.id] = {};
+        }
+
+        nickTimeouts[guild.id][member.user.id] = setTimeout(function() {
+            member.setNickname(nickname);
+            nickTimeouts[guild.id][member.user.id] = null;
+        }, 300000, null);
+
+        if (nickname == "") {
+            client.channels.get(settings.guilds[guild.id].botWarnings).send(":arrows_counterclockwise: <@" + member.user.id + "> :arrow_right: `[clear]`. `" + prefix + "declnick " + member.user.id + "`");
+        } else {
+            client.channels.get(settings.guilds[guild.id].botWarnings).send(":arrows_counterclockwise: <@" + member.user.id + "> :arrow_right: `" + nickname + "`. `" + prefix + "declnick " + member.user.id + "`");
+        }
+        settings.guilds[guild.id].pendingNicks = pendingNicks;
+        return "ok";
+    } else {
+        settings.guilds[guild.id].pendingNicks = pendingNicks;
+        return "cooldown";
+    }
+}
+
+function processConfigure(message, guild) {
+    var text = message.content.toLowerCase();
+
+    var guildSetting = settings.guilds[guild.id];
+
+    if (guildSetting.requiresConfig) {
+        switch (guildSetting.configuringStage) {
+            case 0: { //Mod roles
+                var roles = text.split(" ");
+                var isValid = true;
+
+                for (role of roles) {
+                    if (guild.roles.has(role)) {
+                        message.author.send(role + " = " + guild.roles.get(role).name);
+                    } else {
+                        message.author.send(role + " = ???");
+                        isValid = false;
+                    }
+                }
+
+                if (!isValid) {
+                    message.author.send("Let's try this again. Enter the roles of mods on this server, seperated by a space.");
+                    return;
+                } else {
+                    guildSetting.tentativeModRoles = roles;
+
+                    message.author.send("Is this correct?");
+                    guildSetting.configuringStage = 1;
+                }
+                
+                break;
+            }
+            case 1: { //Mod roles - confirm
+                if (text == "yes" || text == "y") {
+                    guildSetting.modRoles = guildSetting.tentativeModRoles;
+                    guildSetting.tentativeModRoles = null;
+
+                    message.author.send("Thanks. Next, I'll need the ID of the channel where I can post member alerts. Alternatively, enter \"none\" if you want to disable member alerts.");
+                    guildSetting.configuringStage = 2;
+                } else if (text == "no" || text == "n") {
+                    guildSetting.tentativeModRoles = null;
+                    message.author.send("Let's try this again. Enter the roles of mods on this server, seperated by a space.");
+                    guildSetting.configuringStage = 0;
+                } else {
+                    message.author.send("I didn't quite understand what you said. Try \"yes\" or \"no\".");
+                }
+                break;
+            }
+            case 2: { //Member Alerts Channel
+                if (text == "none") {
+                    message.author.send("You're disabling member alerts. Is that correct?");
+                    guildSetting.tentativeMemberAlerts = null;
+                    guildSetting.configuringStage = 3;
+                } else {
+                    if (!guild.channels.has(text)) {
+                        message.author.send("That channel doesn't exist. Try again.");
+                    } else {
+                        var channel = guild.channels.get(text);
+                        if (channel.type != "text") {
+                            message.author.send("That's not a text channel. Try again.");
+                        } else {
+                            message.author.send("You're setting #" + channel.name + " as the member alerts channel. Is that correct?");
+                            guildSetting.tentativeMemberAlerts = channel.id;
+                            guildSetting.configuringStage = 3;
+                        }
+                    }
+                }
+                break;
+            }
+            case 3: { //Member Alerts Channel - Confirm
+                if (text == "yes" || text == "y") {
+                    guildSetting.memberAlerts = guildSetting.tentativeMemberAlerts;
+                    guildSetting.tentativeMemberAlerts = null;
+
+                    message.author.send("Thanks. Next, I'll need the ID of the channel where I can post chat logs.");
+                    guildSetting.configuringStage = 4;
+                } else if (text == "no" || text == "n") {
+                    guildSetting.tentativeMemberAlerts = null;
+                    message.author.send("Let's try this again. What's the ID of the channel where I can post member alerts?");
+                    guildSetting.configuringStage = 2;
+                } else {
+                    message.author.send("I didn't quite understand what you said. Try \"yes\" or \"no\".");
+                }
+                break;
+            }
+            case 4: { //Chat Logs Channel
+                if (text == "none") {
+                    message.author.send("You're disabling chat logs. Is that correct?");
+                    guildSetting.tentativeChatLogs = null;
+                    guildSetting.configuringStage = 5;
+                } else {
+                    if (!guild.channels.has(text)) {
+                        message.author.send("That channel doesn't exist. Try again.");
+                    } else {
+                        var channel = guild.channels.get(text);
+                        if (channel.type != "text") {
+                            message.author.send("That's not a text channel. Try again.");
+                        } else {
+                            message.author.send("You're setting #" + channel.name + " as the Chat logs channel. Is that correct?");
+                            guildSetting.tentativeChatLogs = channel.id;
+                            guildSetting.configuringStage = 5;
+                        }
+                    }
+                }
+                break;
+            }
+            case 5: { //Chat Logs Channel - Confirm
+                if (text == "yes" || text == "y") {
+                    guildSetting.chatLogs = guildSetting.tentativeChatLogs;
+                    guildSetting.tentativeChatLogs = null;
+
+                    message.author.send("Thanks. Next, I'll need the ID of the channel where I can post general warnings.");
+                    guildSetting.configuringStage = 6;
+                } else if (text == "no" || text == "n") {
+                    guildSetting.tentativeChatLogs = null;
+                    message.author.send("Let's try this again. What's the ID of the channel where I can post chat logs?");
+                    guildSetting.configuringStage = 4;
+                } else {
+                    message.author.send("I didn't quite understand what you said. Try \"yes\" or \"no\".");
+                }
+                break;
+            }
+            case 6: { //Botwarnings Channel
+                if (text == "none") {
+                    message.author.send("You're disabling general warnings. Is that correct?");
+                    guildSetting.tentativeBotWarnings = null;
+                    guildSetting.configuringStage = 7;
+                } else {
+                    if (!guild.channels.has(text)) {
+                        message.author.send("That channel doesn't exist. Try again.");
+                    } else {
+                        var channel = guild.channels.get(text);
+                        if (channel.type != "text") {
+                            message.author.send("That's not a text channel. Try again.");
+                        } else {
+                            message.author.send("You're setting #" + channel.name + " as the general warnings channel. Is that correct?");
+                            guildSetting.tentativeBotWarnings = channel.id;
+                            guildSetting.configuringStage = 7;
+                        }
+                    }
+                }
+                break;
+            }
+            case 7: { //Botwarnings Channel - Confirm
+                if (text == "yes" || text == "y") {
+                    guildSetting.botWarnings = guildSetting.tentativeBotWarnings;
+                    guildSetting.tentativeBotWarnings = null;
+
+                    message.author.send("Thanks. Do you want to enable suggestions?");
+                    guildSetting.configuringStage = 8;
+                } else if (text == "no" || text == "n") {
+                    guildSetting.tentativeBotWarnings = null;
+                    message.author.send("Let's try this again. What's the ID of the channel where I can post general warnings?");
+                    guildSetting.configuringStage = 6;
+                } else {
+                    message.author.send("I didn't quite understand what you said. Try \"yes\" or \"no\".");
+                }
+                break;
+            }
+            case 8: { //Suggestions - Ask
+                if (text == "yes" || text == "y") {
+                    message.author.send("Ok, what's the ID of the channel?");
+                    guildSetting.configuringStage = 9;
+                } else if (text == "no" || text == "n") {
+                    guildSetting.suggestions = null;
+                    message.author.send("Thanks. AstralMod is now ready for use! Enjoy using AstralMod!");
+                    guildSetting.requiresConfig = false;
+                    guildSetting.configuringUser = null;
+                } else {
+                    message.author.send("I didn't quite understand what you said. Try \"yes\" or \"no\".");
+                }
+                break;
+            }
+            case 9: { //Suggestions Channel
+                if (!guild.channels.has(text)) {
+                    message.author.send("That channel doesn't exist. Try again.");
+                } else {
+                    var channel = guild.channels.get(text);
+                    if (channel.type != "text") {
+                        message.author.send("That's not a text channel. Try again.");
+                    } else {
+                        message.author.send("You're setting #" + channel.name + " as the suggestions channel. Is that correct?");
+                        guildSetting.tentativeSuggestions = channel.id;
+                        guildSetting.configuringStage = 10;
+                    }
+                }
+                break;
+            }
+            case 10: { //Suggestions Channel - Confirm
+                if (text == "yes" || text == "y") {
+                    guildSetting.suggestions = guildSetting.tentativeSuggestions;
+                    guildSetting.tentativeSuggestions = null;
+
+                    message.author.send("Thanks. AstralMod is now ready for use! Enjoy using AstralMod!");
+                    guildSetting.requiresConfig = false;
+                    guildSetting.configuringUser = null;
+                } else if (text == "no" || text == "n") {
+                    guildSetting.tentativeSuggestions = null;
+                    message.author.send("Let's try this again. What's the ID of the channel where I can post suggestions?");
+                    guildSetting.configuringStage = 9;
+                } else {
+                    message.author.send("I didn't quite understand what you said. Try \"yes\" or \"no\".");
+                }
+                break;
+            }
+        }
+    }
+
+    settings.guilds[guild.id] = guildSetting;
+}
+
+function getSingleConfigureWelcomeText(guild) {
+    var guildSetting = settings.guilds[guild.id];
+    var string = "What would you like to configure? Type the number next to the option you want to set:```";
+
+    string += "1 Staff Roles        " + guildSetting.modRoles.length + " roles\n";
+
+    if (guild.channels.get(guildSetting.memberAlerts) == null) {
+        string += "2 Member Alerts      Disabled\n";
+    } else {
+        string += "2 Member Alerts      #" + guild.channels.get(guildSetting.memberAlerts).name + "\n";
+    }
+
+    if (guild.channels.get(guildSetting.chatLogs) == null) {
+        string += "3 Chat Logs          Disabled\n";
+    } else {
+        string += "3 Chat Logs          #" + guild.channels.get(guildSetting.chatLogs).name + "\n";
+    }
+
+    if (guild.channels.get(guildSetting.botWarnings) == null) {
+        string += "4 Bot Warnings       Disabled\n";
+    } else {
+        string += "4 Bot Warnings       #" + guild.channels.get(guildSetting.botWarnings).name + "\n";
+    }
+
+    if (guild.channels.get(guildSetting.suggestions) == null) {
+        string += "5 Suggestions        Disabled\n";
+    } else {
+        string += "5 Suggestions        #" + guild.channels.get(guildSetting.suggestions).name + "\n";
+    }
+
+    if (guildSetting.nickModeration == null || guildSetting.nickModeration == false) {
+        string += "a Nick Moderation    Disabled\n";
+    } else {
+        string += "a Nick Moderation    Enabled\n";
+    }
+
+    string += "\n";
+    string += "0 Exit Configuration Menu\n";
+    string += "< Reset AstralMod```"
+
+    return string;
+}
+
+function processSingleConfigure(message, guild) {
+    var text = message.content.toLowerCase();
+    var guildSetting = settings.guilds[guild.id];
+
+    switch (guildSetting.configuringStage) {
+        case -10: { //Reset AstralMod
+            if (message.content == "Reset AstralMod") { //Purge all configuration for this server
+                log("Purging all configuration for " + guild.id);
+                guildSetting = {
+                    requiresConfig: true
+                };
+                log("Configuration for " + guild.id + " purged.", logType.good);
+                message.author.send("AstralMod configuration for this server has been reset. To set up AstralMod, just `" + prefix + "config` in the server.");
+            } else { //Cancel
+                message.author.send("Returning to Main Menu.");
+                message.author.send(getSingleConfigureWelcomeText(guild));
+                guildSetting.configuringStage = 0;
+            }
+            break;
+        }
+        case 0: { //Main Menu
+            switch (text) {
+                case "1": //Staff Roles
+                    settings.guilds[guild.id].configuringUser = message.author.id;
+                    settings.guilds[guild.id].configuringStage = 0;
+                    message.author.send("Enter the roles of mods on this server, seperated by a space. To cancel, just type \"cancel\"");
+                    
+                    var roles = "```";
+                    for (let [id, role] of guild.roles) {
+                        roles += role.id + " = " + role.name + "\n";
+                    }
+                    roles += "```";
+                    message.author.send(roles);
+                    
+                    guildSetting.configuringStage = 10;
+                    break;
+                case "2": //Member Alerts
+                    message.author.send("What's the ID of the channel where I can post member alerts? Alternatively, enter \"none\" if you want to disable member alerts, and type \"cancel\" to cancel.");
+                    guildSetting.configuringStage = 20;
+                    break;
+                case "3": //Chat Logs
+                    message.author.send("What's the ID of the channel where I can post chat logs? Alternatively, enter \"none\" if you want to disable chat logs, and type \"cancel\" to cancel.");
+                    guildSetting.configuringStage = 30;
+                    break;
+                case "4": //Bot warnings
+                    message.author.send("What's the ID of the channel where I can post general warnings? Alternatively, enter \"none\" if you want to disable general warnings, and type \"cancel\" to cancel.");
+                    guildSetting.configuringStage = 40;
+                    break;
+                case "5": //Suggestions
+                    message.author.send("What's the ID of the channel where I can post suggestions? Alternatively, enter \"none\" if you want to disable suggestions, and type \"cancel\" to cancel.");
+                    guildSetting.configuringStage = 50;
+                    break;
+                case "0": //Exit
+                    message.author.send("Configuration complete.");
+                    guildSetting.configuringUser = null;
+                    break;
+                case "a": //Nick Moderation
+                    if (guildSetting.nickModeration) {
+                        guildSetting.nickModeration = false;
+                    } else {
+                        guildSetting.nickModeration = true;
+                    }
+
+                    message.author.send("Ok, I've changed that.");
+                    message.author.send(getSingleConfigureWelcomeText(guild));
+                    break;
+                case "<": //Reset AstralMod
+                    message.author.send("**Reset AstralMod**\n" +
+                                        "Resetting AstralMod for this server. This will clear all settings for this server and you'll need to set up AstralMod again to use it.\n" +
+                                        "To reset AstralMod, respond with `Reset AstralMod`.");
+                    guildSetting.configuringStage = -10;
+                    break;
+                default:
+                    message.author.send("That's not an option.");
+                    message.author.send(getSingleConfigureWelcomeText(guild));
+            }
+            break;
+        }
+        case 10: { //Staff Roles
+            if (text == "cancel") {
+                message.author.send(getSingleConfigureWelcomeText(guild));
+                guildSetting.configuringStage = 0;
+            } else {
+                var roles = text.split(" ");
+                var isValid = true;
+
+                for (role of roles) {
+                    if (guild.roles.has(role)) {
+                        message.author.send(role + " = " + guild.roles.get(role).name);
+                    } else {
+                        message.author.send(role + " = ???");
+                        isValid = false;
+                    }
+                }
+
+                if (!isValid) {
+                    message.author.send("Let's try this again. Enter the roles of mods on this server, seperated by a space.");
+                    return;
+                } else {
+                    guildSetting.tentativeModRoles = roles;
+
+                    message.author.send("Is this correct?");
+                    guildSetting.configuringStage = 11;
+                }
+            }
+            break;
+        }
+        case 11: { //Staff Roles Confirm
+            if (text == "yes" || text == "y") {
+                guildSetting.modRoles = guildSetting.tentativeModRoles;
+                guildSetting.tentativeModRoles = null;
+
+                message.author.send("Thanks, I'll save that.");
+                message.author.send(getSingleConfigureWelcomeText(guild));
+                guildSetting.configuringStage = 0;
+            } else if (text == "no" || text == "n") {
+                guildSetting.tentativeModRoles = null;
+                message.author.send("Let's try this again. Enter the roles of mods on this server, seperated by a space.");
+                guildSetting.configuringStage = 10;
+            } else {
+                message.author.send("I didn't quite understand what you said. Try \"yes\" or \"no\".");
+            }
+            break;
+        }
+
+        case 20: { //Member Alerts Channel
+            if (text == "cancel") {
+                message.author.send(getSingleConfigureWelcomeText(guild));
+                guildSetting.configuringStage = 0;
+            } else if (text == "none") {
+                message.author.send("You're disabling member alerts. Is that correct?");
+                guildSetting.tentativeMemberAlerts = null;
+                guildSetting.configuringStage = 21;
+            } else {
+                if (!guild.channels.has(text)) {
+                    message.author.send("That channel doesn't exist. Try again.");
+                } else {
+                    var channel = guild.channels.get(text);
+                    if (channel.type != "text") {
+                        message.author.send("That's not a text channel. Try again.");
+                    } else {
+                        message.author.send("You're setting #" + channel.name + " as the member alerts channel. Is that correct?");
+                        guildSetting.tentativeMemberAlerts = channel.id;
+                        guildSetting.configuringStage = 21;
+                    }
+                }
+            }
+            break;
+        }
+        case 21: { //Member Alerts Channel - Confirm
+            if (text == "yes" || text == "y") {
+                guildSetting.memberAlerts = guildSetting.tentativeMemberAlerts;
+                guildSetting.tentativeMemberAlerts = null;
+
+                message.author.send("Thanks, I'll save that.");
+                message.author.send(getSingleConfigureWelcomeText(guild));
+                guildSetting.configuringStage = 0;
+            } else if (text == "no" || text == "n") {
+                guildSetting.tentativeMemberAlerts = null;
+                message.author.send("Let's try this again. What's the ID of the channel where I can post member alerts?");
+                guildSetting.configuringStage = 20;
+            } else {
+                message.author.send("I didn't quite understand what you said. Try \"yes\" or \"no\".");
+            }
+            break;
+        }
+
+        case 30: { //Chat Logs Channel
+            if (text == "cancel") {
+                message.author.send(getSingleConfigureWelcomeText(guild));
+                guildSetting.configuringStage = 0;
+            } else if (text == "none") {
+                message.author.send("You're disabling chat logs. Is that correct?");
+                guildSetting.tentativeChatLogs = null;
+                guildSetting.configuringStage = 31;
+            } else {
+                if (!guild.channels.has(text)) {
+                    message.author.send("That channel doesn't exist. Try again.");
+                } else {
+                    var channel = guild.channels.get(text);
+                    if (channel.type != "text") {
+                        message.author.send("That's not a text channel. Try again.");
+                    } else {
+                        message.author.send("You're setting #" + channel.name + " as the Chat logs channel. Is that correct?");
+                        guildSetting.tentativeChatLogs = channel.id;
+                        guildSetting.configuringStage = 31;
+                    }
+                }
+            }
+            break;
+        }
+        case 31: { //Chat Logs Channel - Confirm
+            if (text == "cancel") {
+                message.author.send(getSingleConfigureWelcomeText(guild));
+                guildSetting.configuringStage = 0;
+            } else if (text == "yes" || text == "y") {
+                guildSetting.chatLogs = guildSetting.tentativeChatLogs;
+                guildSetting.tentativeChatLogs = null;
+
+                message.author.send("Thanks, I'll save that.");
+                message.author.send(getSingleConfigureWelcomeText(guild));
+                guildSetting.configuringStage = 0;
+            } else if (text == "no" || text == "n") {
+                guildSetting.tentativeChatLogs = null;
+                message.author.send("Let's try this again. What's the ID of the channel where I can post chat logs?");
+                guildSetting.configuringStage = 30;
+            } else {
+                message.author.send("I didn't quite understand what you said. Try \"yes\" or \"no\".");
+            }
+            break;
+        }
+        case 40: { //Botwarnings Channel
+            if (text == "none") {
+                message.author.send("You're disabling general warnings. Is that correct?");
+                guildSetting.tentativeBotWarnings = null;
+                guildSetting.configuringStage = 41;
+            } else {
+                if (!guild.channels.has(text)) {
+                    message.author.send("That channel doesn't exist. Try again.");
+                } else {
+                    var channel = guild.channels.get(text);
+                    if (channel.type != "text") {
+                        message.author.send("That's not a text channel. Try again.");
+                    } else {
+                        message.author.send("You're setting #" + channel.name + " as the general warnings channel. Is that correct?");
+                        guildSetting.tentativeBotWarnings = channel.id;
+                        guildSetting.configuringStage = 41;
+                    }
+                }
+            }
+            break;
+        }
+        case 41: { //Botwarnings Channel - Confirm
+            if (text == "yes" || text == "y") {
+                guildSetting.botWarnings = guildSetting.tentativeBotWarnings;
+                guildSetting.tentativeBotWarnings = null;
+
+                message.author.send("Thanks, I'll save that.");
+                message.author.send(getSingleConfigureWelcomeText(guild));
+                guildSetting.configuringStage = 0;
+            } else if (text == "no" || text == "n") {
+                guildSetting.tentativeBotWarnings = null;
+                message.author.send("Let's try this again. What's the ID of the channel where I can post general warnings?");
+                guildSetting.configuringStage = 40;
+            } else {
+                message.author.send("I didn't quite understand what you said. Try \"yes\" or \"no\".");
+            }
+            break;
+        }
+        
+        case 50: { //Suggestions Channel
+            if (text == "none") {
+                message.author.send("You're disabling suggestions. Is that correct?");
+                guildSetting.tentativeBotWarnings = null;
+                guildSetting.configuringStage = 51;
+            } else {
+                if (!guild.channels.has(text)) {
+                    message.author.send("That channel doesn't exist. Try again.");
+                } else {
+                    var channel = guild.channels.get(text);
+                    if (channel.type != "text") {
+                        message.author.send("That's not a text channel. Try again.");
+                    } else {
+                        message.author.send("You're setting #" + channel.name + " as the suggestions channel. Is that correct?");
+                        guildSetting.tentativeSuggestions = channel.id;
+                        guildSetting.configuringStage = 51;
+                    }
+                }
+            }
+            break;
+        }
+        case 51: { //Suggestions Channel - Confirm
+            if (text == "yes" || text == "y") {
+                guildSetting.suggestions = guildSetting.tentativeSuggestions;
+                guildSetting.tentativeSuggestions = null;
+
+                message.author.send("Thanks, I'll save that.");
+                message.author.send(getSingleConfigureWelcomeText(guild));
+                guildSetting.configuringStage = 0;
+            } else if (text == "no" || text == "n") {
+                guildSetting.tentativeSuggestions = null;
+                message.author.send("Let's try this again. What's the ID of the channel where I can post suggestions?");
+                guildSetting.configuringStage = 50;
+            } else {
+                message.author.send("I didn't quite understand what you said. Try \"yes\" or \"no\".");
+            }
+            break;
+        }
+    }
+
+    settings.guilds[guild.id] = guildSetting;
+}
+
+function processDeal(message) {
+    //Handle the deal command
     var msg = message.content;
     var member = actionMember[message.guild.id];
     if (actionStage[message.guild.id] == 0) { //Select Action
-        if (msg == "cancel") {
+        if (msg.toLowerCase() == "cancel") { //Cancel Action
             message.channel.send(':gear: Cancelled. Exiting action menu.');
             member = null;
             actioningMember[message.guild.id] = null;
-        } else if ((msg.toLowerCase() == "interrogate" || msg.toLowerCase() == "i") && (message.guild.id == 277922530973581312 || message.guild.id == 287937616685301762 || message.guild.id == 305039436490735627)) {
-            if (message.guild.id == 277922530973581312) {
-                member.addRole(member.guild.roles.get("292630494254858241"));
+        } else if ((msg.toLowerCase() == "interrogate" || msg.toLowerCase() == "i") && (message.guild.id == consts.aphc.id || message.guild.id == 287937616685301762 || message.guild.id == 305039436490735627)) {
+            if (message.guild.id == consts.aphc.id) {
+                member.addRole(member.guild.roles.get(consts.aphc.interrogationRole));
             } else if (message.guild.id == 287937616685301762) {
                 member.addRole(member.guild.roles.get("319847521440497666"));
             } else if (message.guild.id == 305039436490735627) {
@@ -404,9 +2427,9 @@ function handleAction(message) {
             message.channel.send(':gear: ' + getUserString(member) + " has been placed in interrogation.");
             member = null;
             actioningMember[message.guild.id] = null;
-        } else if ((msg.toLowerCase() == "jail" || msg.toLowerCase() == "j") && (message.guild.id == 277922530973581312 || message.guild.id == 263368501928919040 || message.guild.id == 305039436490735627)) {
-            if (message.guild.id == 277922530973581312) {
-                member.addRole(member.guild.roles.get("277942939915780099"));
+        } else if ((msg.toLowerCase() == "jail" || msg.toLowerCase() == "j") && (message.guild.id == consts.aphc.id || message.guild.id == 263368501928919040 || message.guild.id == 305039436490735627)) {
+            if (message.guild.id == consts.aphc.id) {
+                member.addRole(member.guild.roles.get(consts.aphc.jailRole));
             } else if (message.guild.id == 305039436490735627) {
                 member.addRole(member.guild.roles.get("310196007919157250"));
             } else {
@@ -416,10 +2439,10 @@ function handleAction(message) {
             message.channel.send(':gear: ' + getUserString(member) + " has been placed in jail.");
             member = null;
             actioningMember[message.guild.id] = null;
-        } else if ((msg.toLowerCase() == "mute" || msg.toLowerCase() == "m") && (message.guild.id == 277922530973581312 || message.guild.id == 305039436490735627)) {
+        } else if ((msg.toLowerCase() == "mute" || msg.toLowerCase() == "m") && (message.guild.id == consts.aphc.id || message.guild.id == 305039436490735627)) {
             var roleId;
-            if (message.guild.id == 277922530973581312) {
-                roleId = "294782894625390593";
+            if (message.guild.id == consts.aphc.id) {
+                roleId = consts.aphc.jailRole;
             } else if (message.guild.id == 305039436490735627) {
                 roleId = "309883481024888842";
             }
@@ -452,9 +2475,11 @@ function handleAction(message) {
             member = null;
             actioningMember[message.guild.id] = null;
         }
-        message.delete();
+        message.delete().catch(function() {
+                logPromiseRejection(message, "messageDelete");
+        });
     } else if (actionStage[message.guild.id] == 1) {
-        if (msg == "cancel") {
+        if (msg.toLowerCase() == "cancel") {
             message.channel.send(':gear: Cancelled. Exiting action menu.');
             member = null;
             actioningMember[message.guild.id] = null;
@@ -479,7 +2504,7 @@ function handleAction(message) {
                 actioningMember[message.guild.id] = null;
             });
         } else if (actionToPerform[message.guild.id] == "nick") {
-            if (msg == "clear") {
+            if (msg.toLowerCase() == "clear") {
                 msg = "";
             }
             
@@ -493,1744 +2518,153 @@ function handleAction(message) {
                 actioningMember[message.guild.id] = null;
             });
         }
-        message.delete();
+        message.delete().catch(function() {
+            logPromiseRejection(message, "messageDelete");
+        });
     }
     actionMember[message.guild.id] = member;
 }
 
-function playAudio() {
-    dispatcher = connection.playFile("forecastvoice.mp3");
-    dispatcher.on('end', playAudio);
-}
+function processMessage(message) {
+    try {
+        //Ignore self
+        if (message.author.id == client.user.id) return;
 
-client.on('ready', () => {
-    console.log("[STATUS] AstralMod " + amVersion + " - locked and loaded!");
-    client.setInterval(setGame, 300000);
-    setGame();
-    
-    //Jump into waiting room
-    client.channels.get("277924441584041985").join().then(function(conn) {
-        console.log("[STATUS] AstralMod is connected to the waiting room");
-        connection = conn;
-        playAudio();
-    });
-    
-    //Get all messages in #suggestions
-    client.channels.get("308499752993947649").fetchMessages({
-        limit: 100
-    });
-});
+        var text = message.content;
 
-function nickExpletiveCheck(phrase) {
-	if (containsExpletive(phrase)) return true;
-	
-	var exp = phrase.search(/(hentai|asl|a55|ass|anal|ballsack|bong|cocaine|cum|dick|dp|pedo|pube|rape|scat|semen|testes|tits|anus|arse|bitch|b1tch|b17ch|boob|cock|foreskin|hardon|jerk|✓ᵛᵉʳᶦᶠᶦᵉᵈ)+/i);
+        //Determine if this is in a guild
+        if (message.guild != null) {
+            //Determine if we are in a workflow
+            if (actioningMember[message.guild.id] == message.author) {
+                //We are currently in the deal workflow
+                processDeal(message);
+                return;
+            }
 
-	if (exp == -1) {
-		return false;
-	} else {
-		return true;
-	}
-}
-
-function containsExpletive(phrase) {
-    var exp = phrase.search(/\b(shit|shite|shitty|bullshit|fuck|fucking|ass|penis|cunt|faggot|damn|wank|wanker|nigger|bastard|shut up|piss|vagina|thisisnotarealwordbutatestword)+\b/i);
-    
-    if (exp == -1) {
-        return false;
-    } else {
-        return true;
-    }
-}
-
-function getBoshyTime(guild) {
-    if (guild.emojis.exists('name', 'vtBoshyTime')) {
-        return "<:vtBoshyTime:" + guild.emojis.find('name', 'vtBoshyTime').id + ">";
-    } else { 
-        return ":warning:";
-    }
-}
-
-function isMod(member) {
-    if (member != null) {
-        if (member.roles.find("name", "Admin") || member.roles.find("name", "Moderator") || member.roles.find("name", "moderators") || member.roles.find("name", "Mod") || member.roles.find("name", "Upper Council of Explorers") || member.roles.find("name", "Lower Council of Explorers") || member.roles.find("name", "Pseudo-Moderator") || member.roles.find("name", "Staff") || member.roles.find("name", "The Crew") || member.roles.find("name", "Mini-Mods")) {
-            return true;
-        } else {
-            return false;
-        }
-    } else {
-        return false;
-    }
-}
-
-//var prank = true;
-
-function postBulletin() {
-    var channel = client.channels.get("308576038324142081");
-    
-    switch (Math.floor(Math.random() * 1000) % 6) {
-        case 0:
-            channel.send("<:vtBoshyTime:280178631886635008> PING! Don't forget, the **no expletive** rule is now in effect. Thanks!");
-            break;
-        case 1:
-            channel.send("<:vtBoshyTime:280178631886635008> PING! If you missed out, don't forget to check out the AstralPhaser channel for a review of the chat!");
-            break;
-        case 2:
-            channel.send("<:vtBoshyTime:280178631886635008> PING! Thanks for coming to the chat everyone!");
-            break;
-        case 3:
-            channel.send("<:vtBoshyTime:280178631886635008> PING! Welcome to AstralPhaser Central!");
-            break;
-        case 4:
-            channel.send("<:vtBoshyTime:280178631886635008> PING! For anyone who asks: we're not doing rotations!");
-            break;
-        case 5:
-            channel.send("<:vtBoshyTime:280178631886635008> PING! Hip Hip Hooray for the mods!");
-            break;
-    }
-}
-
-function handleDM(message) {
-    if (suggestStates[message.author.id] != null) {
-        handleSuggest(message);
-        return;
-    } else {
-        var msg = message.content;
-        var command = msg;
-        if (msg.toLowerCase().startsWith("mod:") || msg.toLowerCase().startsWith("bot:")) {
-            command = msg.substr(4);
-        }
-    }
-}
-
-function messageChecker(oldMessage, newMessage) {
-    var message;
-    if (newMessage == null) {
-        message = oldMessage;
-    } else {
-        message = newMessage;
-    }
-    var msg = message.content;
-    
-    if (message.guild == null) {
-        handleDM(message);
-        return;
-    }
-    
-    if (!runningCommands) {
-        if ((message.author.id == 278805875978928128 || message.author.id == 175760550070845451 || message.author.id == 209829628796338176) && msg == "mod:cmd") {
-            runningCommands = true;
-            message.reply(':white_check_mark: OK: AstralMod commands have been enabled.');
-        }
-        return;
-    }
-    
-    if (actioningMember[message.guild.id] == message.author) {
-        handleAction(message);
-    }
-    
-    if (doModeration[message.guild.id] == null) {
-        if (message.guild.id == 140241956843290625) { //Check if this is TGL
-            doModeration[message.guild.id] = false;
-        } else {
-            doModeration[message.guild.id] = true;
-        }
-    }
-    
-    if (panicMode[message.guild.id] == null) {
-        panicMode[message.guild.id] = false;
-    }
-    
-    if (panicMode[message.guild.id]) {
-        if (msg == "mod:panic" && isMod(message.member)) {
-            message.channel.send(':rotating_light: Panic mode is now off.');
-            panicMode[message.guild.id] = false;
-            console.log("[STATUS] Panic off.");
-            message.delete();
-            return;
-        }
-        
-        if (!isMod(message.member)) {
-            message.delete();
-        }
-    }
-    
-    if (msg == "mod:banana" && (message.author.id == 135169858689171456 || message.author.id == 278805875978928128)) {
-        bananaFilter = !bananaFilter;
-        if (bananaFilter) {
-            message.reply(":white_check_mark: Banana filter is now on.");
-            message.delete();
-        } else {
-            message.reply(":white_check_mark: Banana filter is now off.");
-            message.delete();
-        }
-    } else {
-        if (message.author.id == 135169858689171456 && bananaFilter) {
-            if (message.attachments != null) {
-                var block = false;
-                for (let [key, attachment] of message.attachments) {
-                    if (attachment.height != null) {
-                        block = true;
-                        break;
+            if (text.toLowerCase().startsWith(prefix)) {
+                //Determine if this is a command
+                if (isMod(message.member) || text == prefix + "config") { //This is a mod command
+                    if (!processModCommand(message)) {
+                        if (!processAmCommand(message)) {
+                            //Pass command onto plugins
+                            commandEmitter.emit('processCommand', message, true, text.substr(prefix.length).toLowerCase());
+                        }
                     }
-                }
-                
-                if (block) {
-                    message.reply("Nope.");
-                    message.delete();
-                    return;
+                } else {
+                    if (!processAmCommand(message)) {
+                        //Pass command onto plugins
+                        commandEmitter.emit('processCommand', message, false, text.substr(prefix.length).toLowerCase());
+                    }
                 }
             }
-        }
-    }
-    
-    if (!isMod(message.member) && msg.indexOf("@everyone") != -1 || msg.indexOf("@here") != -1 && message.guild.id == 277922530973581312) {
-        message.reply("Nice try... but we disabled that.");
-    }
-    
-    if (msg == "kden") {
-        message.channel.send("live");
-    }
-    
-    if (message.author.id != 280495817901473793 && !message.author.bot) {
-        //Server Detection:
-        //AstralPhaser Central: 277922530973581312
-        //AKidFromTheUK       : 285740807854751754
-
-        if (doModeration[message.guild.id]) { //Check if we should do moderation on this server
-            if (expletiveFilter || message.guild.id == 278824407743463424) { //Check for expletives only if on AstralPhaser Central or theShell
-                //Check for expletives
-                var exp;
-                if (containsExpletive(msg)) { //Gah! They're not supposed to say that!
-                    console.log("[FILTER] Expletive caught from " + getUserString(message.author));
-                    switch (Math.floor(Math.random() * 1000) % 7) {
-                        case 0:
-                            message.reply("I'm very disappointed in you. This is me <:angryvt:282006699802361856>");
-                            break;
-                        case 1:
-                            message.reply("Hey! Let's not have any of that please.");
-                            break;
-                        case 2:
-                            message.reply("Did you just...");
-                            break;
-                        case 3:
-                            message.reply("Cool. Now let's not forget the rules.");
-                            break;
-                        case 4:
-                            message.reply("If I'm not going to delete it, a mod will. Let's save them some work.");
-                            break;
-                        case 5:
-                            message.reply("Hey! That was a swear! No!");
-                            break;
-                        case 6:
-                            message.reply("This situation calls for some passive resistance!");
-                            break;
-                    }
-                    
-                    message.delete();
-                    return;
-                }
-                
-                
-                //Continue only if on AstralPhaser
-                if (message.guild.id == 277922530973581312 && message.channel.id == 308576038324142081) {
-                    //Check for links
-                    
-                    if (message.member != null && !(message.member.roles.find("name", "Patron Tier 5ive") || message.member.roles.find("name", "Patron Tier 2wo") || message.member.roles.find("name", "Patron Tier 3hree") ||message.member.roles.find("name", "Patron Tier 4our"))) {
-                        exp = msg.search(/(http(s)?:\/\/.)?(www\.)?[-a-zA-Z0-9@:%._\+~#=]{2,256}\.[a-z]{2,6}\b([-a-zA-Z0-9@:%_\+.~#?&//=]*)/i);
-                        if (exp != -1) { //This is a link.
-                        console.log("[FILTER] Link caught from " + getUserString(message.author));
-                            switch (Math.floor(Math.random() * 1000) % 6) {
-                                case 0:
-                                    message.reply("I've replaced your link with a not-so-link-like link: click here");
-                                    break;
-                                case 1:
-                                    message.reply("Whatever that link was... I hope it didn't contain some bad stuff...");
-                                    break;
-                                case 2:
-                                    message.reply("Did you just...");
-                                    break;
-                                case 3:
-                                    message.reply("Cool. Now let's not forget the rules.");
-                                    break;
-                                case 4:
-                                    message.reply("If I'm not going to delete it, a mod will. Let's save them some work.");
-                                    break;
-                                case 5:
-                                    message.reply("We don't want to download your FREE RAM.");
-                                    break;
-                            }
-                            
-                            message.delete();
-                            return;
+        } else {
+            //Determine if this is within a workflow or if this is unsolicited
+            for (key in settings.guilds) {
+                var guildSetting = settings.guilds[key];
+                if (guildSetting != null) {
+                    //First check if user is currently configuring
+                    if (guildSetting.configuringUser == message.author.id) {
+                        //Check if this is during first time setup
+                        if (guildSetting.requiresConfig) {
+                            processConfigure(message, client.guilds.get(key));
+                        } else {
+                            processSingleConfigure(message, client.guilds.get(key));
                         }
-                    }
-                    
-                    //Check for images.
-                    //Other attachments are ok.
-                    if (message.attachments != null) {
-                        var block = false;
-                        for (let [key, attachment] of message.attachments) {
-                            if (attachment.height != null) {
-                                block = true;
-                                break;
-                            }
-                        }
-                        
-                        if (block) {
-                            console.log("[FILTER] Image caught from " + getUserString(message.author));
-                            switch (Math.floor(Math.random() * 1000) % 5) {
-                                case 0:
-                                    message.reply("A picture says a thousand words. That picture said about fifteen words. These exact words.");
-                                    break;
-                                case 1:
-                                    message.reply("Let's not make all the other things disappear...");
-                                    break;
-                                case 2:
-                                    message.reply("Did you just...");
-                                    break;
-                                case 3:
-                                    message.reply("Cool. Now let's not forget the rules.");
-                                    break;
-                                case 4:
-                                    message.reply("If I'm not going to delete it, a mod will. Let's save them some work.");
-                                    break;
-                            }
-                            message.delete();
-                            return;
-                        }
-                    }
-                    
-                    //Check for caps
-                    if (msg.match(/[A-Z]/gm) != null && msg.match(/[A-Z]/gm).length > (parseFloat(msg.length) * 0.8)) {
-                        console.log("[FILTER] Caps caught from " + getUserString(message.author));
-                        switch (Math.floor(Math.random() * 1000) % 6) {
-                            case 0:
-                                message.reply("Shh...");
-                                break;
-                            case 1:
-                                message.reply("The community likes peace and quiet.");
-                                break;
-                            case 2:
-                                message.reply("Isn't it weird when you're reading... and then you see a bunch of caps?");
-                                break;
-                            case 3:
-                                message.reply("If you're going to type that, why not get out a pen and paper and do it yourself?");
-                                break;
-                            case 4:
-                                message.reply("DON'T SHOUT IN HERE K");
-                                break;
-                            case 5:
-                                message.reply("Whoa whoa, slow down, my friend! No need for raised voices!");
-                                break;
-                        }
-                        message.delete();
                         return;
                     }
                 }
             }
-            
-            //Universal friendly checks:
-            //BotWarnings:
-            //AstralPhaser Central: 282513354118004747
-            //theShell            : 283184634400079872
-            if (message.author.id != 282048599574052864 && msg.search(/\b(kys|kill yourself|k-y-s|k y s|k ys|k ys|k i l l yourself|k i l l y o u r s e l f|k-ys|ky-s|kill y o u r s e l f|kill ys|k yourself|killyourself|k y o u r s e l f|k why s|k.y.s.|k-y-s.|ky-s.|k-ys.|k y s.|ky s.|k ys.)\b/i) != -1) {
-                var auth = message.author;
-                if (message.guild.id == 277922530973581312) { //AstralPhaser
-                    client.channels.get("282513354118004747").send(":red_circle: " + getUserString(auth) + " \"kys\" <#" + message.channel.id + ">.");
-                } else if (message.guild.id == 278824407743463424) { //theShell {
-                    client.channels.get("283184634400079872").send(":red_circle: " + getUserString(auth) + " \"kys\" <#" + message.channel.id + ">.");
-                } else if (message.guild.id == 281066689892974592) { //LE
-                    client.channels.get("288272065109295104").send(":red_circle: " + getUserString(auth) + " \"kys\" <#" + message.channel.id + ">.");
-                } else if (message.guild.id == 297057036292849680) { //ALA
-                    client.channels.get("297762292823490570").send(":red_circle: " + getUserString(auth) + " \"kys\" <#" + message.channel.id + ">.");
-                } else if (message.guild.id == 263368501928919040) { //TWOW
-                    client.channels.get("314589053959929866").send(":red_circle: " + getUserString(auth) + " \"kys\" <#" + message.channel.id + ">.");
-                } else if (message.guild.id == 305039436490735627) { //STTA
-                    client.channels.get("310017630964809738").send(":red_circle: " + getUserString(auth) + " \"kys\" <#" + message.channel.id + ">.");
-                }
-                message.reply("Right. We don't appreciate that here. (A notification has been sent to the mods.)");
-                message.delete();
-            }
+
+            //Pass command onto plugins
+            commandEmitter.emit('newDM', message);
+        }
+    } catch (err) {
+        var embed = new Discord.RichEmbed;
+        embed.setColor("#FF0000");
+        embed.addField("Details", err.message);
+
+        if (err.name == "UserInputError") {
+            embed.setTitle("<:userexception:348796878709850114> User Input Error");
+            embed.setDescription("AstralMod didn't understand what you were trying to say.");
+        } else if (err.name == "CommandError") {
+            embed.setTitle("<:userexception:348796878709850114> Command Error");
+            embed.setDescription("AstralMod couldn't complete that command.");
+        } else {
+            log("Uncaught Exception:", logType.critical);
+            log(err.stack, logType.critical);
+
+            embed.setTitle("<:exception:346458871893590017> Internal Error");
+            embed.setFooter("This error has been logged, and we'll look into it.");
+            embed.setDescription("AstralMod has run into a problem trying to process that command.");
         }
         
-        if (message.mentions != null && message.mentions.users != null) {
-            if (message.mentions.users.has("282048599574052864")) {
-                if (message.author.id == 159310300275802112) {
-                    message.reply("BEGONE. You called my creator mean. :sob:");
-                } else {
-                    if (msg.toLowerCase().includes("jxbot")) {
-                        message.reply(":no_entry_sign: YA MENTIONED THE INFERIOR BOT. [punches hand and shakes head slowly]");
-                    } else if (msg.toLowerCase().includes("stop") || (msg.toLowerCase().includes("shut") && msg.toLowerCase().includes("up"))) {
-                        
-                        switch (Math.floor(Math.random() * 1000) % 3) {
-                            case 0:
-                                message.reply(":no_entry_sign: NO: I shall talk as much as I like.");
-                                break;
-                            case 1:
-                                message.reply(":no_entry_sign: NO: You shu... I'd better not say that actually");
-                                break;
-                            case 2:
-                                message.reply(":no_entry_sign: NO: Just no.");
-                                break;
-                        }
-                    } else if (msg.toLowerCase().includes("fuck you") || msg.toLowerCase().includes("fuck off") || msg.toLowerCase().includes("shit") || msg.toLowerCase().includes("stfu") ) {
-                        message.reply("Want a :hammer:?");
-                    } else if (msg.toLowerCase().includes("how") && msg.toLowerCase().includes("you")) {
-                        message.reply("I'm doing OK I suppose.");
-                    } else if (msg.toLowerCase().includes("yes") || msg.toLowerCase().includes("yep") || msg.toLowerCase().includes("right?") || msg.toLowerCase().includes("isn't it?")) {
-                        message.reply("Well, I suppose so.");
-                    } else if (msg.toLowerCase().includes("no") || msg.toLowerCase().includes("nope")) {
-                        message.reply("I guess not.");
-                    } else if (msg.toLowerCase().includes("?")) {
-                        switch (Math.floor(Math.random() * 1000) % 4) {
-                            case 0:
-                                message.reply("Erm... Maybe? I dunno.");
-                                break;
-                            case 1:
-                                message.reply("Consider this a polite dodge of the question.");
-                                break;
-                            case 2:
-                                message.reply("I see someone is interested in seeing how I respond to a question.");
-                                break;
-                            case 3:
-                                message.reply("Sausages.");
-                                break;
-                        }
-                    } else if (msg.toLowerCase().includes("hello") || msg.toLowerCase().includes("hi")) {
-                        message.reply("Is it me you're looking for?");
-                    } else if (msg.toLowerCase().includes("i") && (msg.toLowerCase().includes("love") || msg.toLowerCase().includes(":heart:") || msg.toLowerCase().includes("<3"))) {
-                        message.reply("Aww! Thanks! :heart:");
-                    }
-                }
-            }
-        }
-        
-        var commandProcessed = false;
-        if (msg.toLowerCase().startsWith("mod:") || msg.toLowerCase().startsWith("bot:")) {
-            var command = msg.substr(4);
-            switch (command) {
-                case "ping":
-                    switch (Math.floor(Math.random() * 1000) % 5) {
-                        case 0:
-                            message.channel.send(getBoshyTime(message.guild) + ' PONG! I want to play pong too... :\'(');
-                            break;
-                        case 1:
-                            message.channel.send(getBoshyTime(message.guild) + ' PONG! I love playing pong!'); 
-                            break;
-                        case 2:
-                            message.channel.send(getBoshyTime(message.guild) + ' PONG! Thanks for playing pong with me!');
-                            break;
-                        case 3:
-                            message.channel.send(getBoshyTime(message.guild) + ' PONG! Reflect upon this!');
-                            break;
-                        case 4:
-                            message.channel.send(getBoshyTime(message.guild) + ' PONG!');
-                            break;
-                    }
-                    commandProcessed = true;
-                    break;
-                case "pong":
-                    switch (Math.floor(Math.random() * 1000) % 5) {
-                        case 0:
-                            message.channel.send(getBoshyTime(message.guild) + ' PING! Pings are also cool!');
-                            break;
-                        case 1:
-                            message.channel.send(getBoshyTime(message.guild) + ' PING! Do you like playing pong?'); 
-                            break;
-                        case 2:
-                            message.channel.send(getBoshyTime(message.guild) + ' PING! Here\'s the test message you wanted!');
-                            break;
-                        case 3:
-                            message.channel.send(getBoshyTime(message.guild) + ' PING! I tried to save this server from pollution before it was cool!');
-                            break;
-                        case 4:
-                            message.channel.send(getBoshyTime(message.guild) + ' PING!');
-                            break;
-                    }
-                    commandProcessed = true;
-                    break;
-                case "time":
-                    var localtime = new Date();
-                    localtime.setTime(localtime.getTime() + (60*60*1000)); 
-                    message.channel.send(':arrow_forward: The time now is ' + localtime.toUTCString());
-                    message.delete();
-                    commandProcessed = true;
-                    break;
-                case "help":
-                    var helpMessage = "Here are some things you can try:\n```\n" +
-                        "time   [tz]       Gets the time at UTC +00:00.\n" + 
-                        "                  Useful for checking jail time.\n" +
-                        "                  PARAMETER 1 (OPTIONAL)\n" + 
-                        "                  A timezone to query, for example, +10 or -5.\n\n" +
-                        "clock min [rem]   Sets a timer. This cannot be cancelled. You will receive a DM.\n" +
-                        "                  PARAMETER 1\n" +
-                        "                  Number of minutes to set the timer for.\n" +
-                        "                  PARAMETER 2 (OPTIONAL)\n" +
-                        "                  Reminder to be sent with the message.\n\n";
-                    
-                    
-                    if (message.guild.id == 277922530973581312) { //APHC specific stuff
-                        helpMessage = helpMessage + "nick name         Change your nickname on this server.\n" +
-                        "                  PARAMETER 1\n" +
-                        "                  New nickname.\n\n";
-                    }
-                    
-                    helpMessage = helpMessage + "suggest           Starts the suggestion process.\n" +
-                        "about             Tells you about AstralMod\n" + 
-                        "copyright         Tells you about AstralMod\n" + 
-                        "license           Tells you about AstralMod\n" + 
-                        "warranty          Tells you about AstralMod\n\n" + 
-                        "ping|pong         Asks AstralMod to reply with a message\n\n" +
-                        "These commands need to be prefixed with bot:\n" +
-                        "```";
-                    message.channel.send(helpMessage);
-                    break;
-                case "about":
-                case "license":
-                    message.author.send(
-                        "AstralMod " + amVersion + " - Copyright © Victor Tran and Rylan Arbour 2017. Licensed under the GNU General Public License, version 3 (or any later version). For more info, type in bot:copyright in a channel with AstralMod.\n" +
-                        "https://github.com/vicr123/AstralMod"
-                    );
-                    commandProcessed = true;
-                    break;
-                case "copyright":
-                    message.author.send(
-                        "Copyright (C) 2017 Victor Tran and Rylan Arbour\n\n" +
+        message.channel.send("", {embed: embed});
+    }
+}
 
-                        "This program is free software: you can redistribute it and/or modify\n" +
-                        "it under the terms of the GNU General Public License as published by\n" +
-                        "the Free Software Foundation, either version 3 of the License, or\n" +
-                        "(at your option) any later version.\n\n" +
-                        
-                        "This program is distributed in the hope that it will be useful,\n" +
-                        "but WITHOUT ANY WARRANTY; without even the implied warranty of\n" +
-                        "MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n" +
-                        "GNU General Public License for more details.\n\n" +
-
-                        "You should have received a copy of the GNU General Public License\n" +
-                        "along with this program.  If not, see <http://www.gnu.org/licenses/>"
-                    );
-                    commandProcessed = true;
-                    break;
-                case "uinfo":
-                    if (!isMod(message.member)) {
-                        var member = message.member;
-                        embed = new Discord.RichEmbed("test");
-                        embed.setAuthor(getUserString(member), member.user.displayAvatarURL);
-                        embed.setColor("#FF0000");
-                        embed.setDescription("User Information");
-
-                        {
-                            var msg = "**Created** " + member.user.createdAt.toUTCString() + "\n";
-                            if (member.joinedAt.getTime() == 0) {
-                                msg += "**Joined** -∞... and beyond! Discord seems to be giving incorrect info... :(";
-                            } else {
-                                msg += "**Joined** " + member.joinedAt.toUTCString();
-                            }
-
-                            embed.addField("Timestamps", msg);
-                        }
-
-                        {
-                            var msg = "**Current Display Name** " + member.displayName + "\n";
-                            msg += "**Username** " + member.user.username + "\n";
-                            if (member.nickname != null) {
-                                msg += "**Nickname** " + member.nickname;
-                            } else {
-                                msg += "**Nickname** No nickname";
-                            }
-
-                            embed.addField("Names", msg);
-                        }
-
-                        /*if (member.lastMessageID != null) {
-                            var lastMessage = null;
-                            
-                            message.channel.fetchMessage(member.lastMessage).then(function(retrievedMessage) {
-                                lastMessage = retrievedMessage;
-                            }).catch(function () {
-                                lastMessage = -1;
-                            });
-                            
-                            while (lastMessage == null) {}
-                            
-                            if (lastMessage != -1) {
-                                var msg = "**ID** " + member.lastMessageID + "\n";
-                                msg += "**Contents** " + lastMessage.content;
-                                
-                                embed.addField("Last Message", msg);
-                            }
-                        }*/
-
-                        embed.setFooter("User ID: " + member.user.id);
-                        //embed.setDescription(msg);
-                        message.channel.send("", {embed: embed});
-                        commandProcessed = true;
-                    }
-                    break;
-                case "warranty":
-                    message.author.send(
-                        "This program is distributed in the hope that it will be useful,\n" +
-                        "but WITHOUT ANY WARRANTY; without even the implied warranty of\n" +
-                        "MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n" +
-                        "GNU General Public License for more details.\n"
-                    );
-                    commandProcessed = true;
-                    break;
-                case "honeyfry":
-                case "honeyfries":
-                    if (message.guild.id == 277922530973581312) {
-                        message.channel.send('<:honeyfry:291805507428286475> The verdict is YES. GO HONEYFRIES! WOO!\nDon\'t you dare react with a negative emoji Stefan. *I\'m watching you...*');
-                    } else {
-                        message.channel.send(':no_entry_sign: Honeyfries have nothing to do with this server. Carry on...');
-                    }
-                    message.delete();
-                    commandProcessed = true;
-                    break;
-                case "egg":
-                    message.reply(":egg:");
-                    message.delete();
-                    commandProcessed = true;
-                    break;
-                case "braces":
-                    message.reply("On the same line my dear honeyfry. ```cpp\nvoid abc() {\n}```");
-                    commandProcessed = true;
-                    break;
-                case "uptime":
-                    var timeString; // What we'll eventually put into the message
-                    var uptime = parseInt(client.uptime); // Get uptime in ms
-                    uptime = Math.floor(uptime / 1000); // Convert from ms to s
-                    var uptimeMinutes = Math.floor(uptime / 60); // Get the uptime in minutes
-                    var minutes = uptime % 60;
-                    var hours = 0;
-
-                    while (uptimeMinutes >= 60) {
-                        hours++;
-                        uptimeMinutes = uptimeMinutes - 60;
-                    }
-
-                    if (uptimeMinutes < 10) {
-                        timeString = hours + ":0" + uptimeMinutes // We need to add an additional 0 to the minutes
-                    } else {
-                        timeString = hours + ":" + uptimeMinutes // We don't need to add an extra 0.
-                    }
-
-                    message.reply(":clock1: AstralMod has been up for " + timeString + " hours.");
-                    commandProcessed = true;
-                    break;
-                case "suggest":
-                    if (message.guild.id == 277922530973581312 || message.guild.id == 297057036292849680) {
-                        if (message.guild.id == 277922530973581312) {
-                            if (!message.member.roles.has("278338447335489546") && !isMod(message.member)) {
-                                message.reply(":no_entry_sign: ERROR: Suggestions have been restricted to regulars on this server. Become a regular or speak directly to an admin to suggest something.");
-                                break;
-                            }
-                        }
-                        
-                        suggestStates[message.author.id] = {};
-                        suggestStates[message.author.id].state = 1;
-                        suggestStates[message.author.id].guild = message.guild.id;
-                        suggestStates[message.author.id].startTime = new Date();
-                        
-                        message.reply(":arrow_left: Continue in DMs.");
-                        message.author.send(suggestionStartMessage);
-                    } else {
-                        message.reply(":no_entry_sign: ERROR: Suggestions are not accepted on this server via AstralMod. Speak directly to an admin to suggest something.");
-                    }
-                    message.delete();
-                    commandProcessed = true;
-                    break;
-                default:
-                    if (command.startsWith("time")) {
-                            command = command.substr(5);
-
-                            var hours;
-
-                            switch (command.toLowerCase()) {
-                                case "nzdt":
-                                case "auckland":
-                                case "christchurch":
-                                case "new zealand":
-                                case "nz":
-                                    hours = +12;
-                                    break;
-                                case "aedt":
-                                    hours = +11;
-                                    break;
-                                case "sydney":
-                                case "canberra":
-                                case "vicr123":
-                                case "victor":
-                                case "victor tran":
-                                case "vicr":
-                                case "philip":
-                                case "phil":
-                                case "mightyeagle73":
-                                case "mighty_eagle073":
-                                case "oscar":
-                                case "eagle":
-                                case "projsh":
-                                case "onyx":
-                                case "aest":
-                                    hours = +10;
-                                    break;
-                                case "acdt":
-                                    hours = +10.5;
-                                    break;
-                                case "adelaide":
-                                case "aedt":
-                                case "v-":
-                                    hours = +9.5;
-                                    break;
-                                case "sgt":
-                                case "singapore":
-                                    hours = +8;
-                                    break;
-                                case "sotiris":
-                                    hours = +3;
-                                    break;
-                                case "alpha":
-                                case "aren":
-                                case "jelle":
-                                case "amsterdam":
-                                case "jason":
-                                case "berlin":
-                                    hours = +2;
-                                    break;
-                                case "london":
-                                case "uk":
-                                case "jed":
-                                case "lance":
-                                case "lancededcena":
-                                case "stupidgame2":
-                                case "mattie":
-                                case "gmt":
-                                    hours = +1;
-                                    break;
-                                case "utc":
-                                    hours = 0;
-                                    break;
-                                case "ndt":
-                                case "craftxbox":
-                                    hours = -2.5
-                                    break;
-                                case "brt":
-                                case "vrabble":
-                                case "vrabbers":
-                                    hours = -3;
-                                    break;
-                                case "nst":
-                                    hours = -3.5;
-                                    break;
-                                case "michael":
-                                case "wowmom98":
-                                case "rylan":
-                                case "edt":
-                                case "neb":
-                                case "nebble":
-                                case "new york":
-                                case "miles":
-                                case "lemp":
-                                    hours = -4;
-                                    break;
-                                case "est":
-                                case "cdt":
-                                case "wisconsin":
-                                case "texas":
-                                case "dallas":
-                                case "fort worth":
-                                case "austin":
-                                case "houston":
-                                case "memes":
-                                case "trav":
-                                case "travis":
-                                case "travisnc":
-                                case "trm":
-                                case "melon":
-                                case "therandommelon":
-                                case "united":
-                                case "lolrepeatlol":
-                                        hours = -5;
-                                        break;
-                                case "cst":
-                                case "mdt":
-                                case "alkesta":
-                                case "alk":
-                                        hours = -6;
-                                        break;
-                                case "mst":
-                                case "pdt":
-                                case "arizona":
-                                case "seattle":
-                                case "neppy":
-                                case "neptune":
-                                case "cameron":
-                                case "max":
-                                case "komputerkid":
-                                case "banana":
-                                        hours = -7;
-                                        break;
-                                case "pst":
-                                        hours = -8;
-                                        break;
-                                default:
-                                        hours = parseFloat(command);
-                                        command = "UTC " + command + ":00";
-                            }
-
-                            if (hours > -14 && hours < 14) {
-                                    var localtime = new Date();
-                                    var date = new Date(localtime.valueOf() + (localtime.getTimezoneOffset() + hours * 60) * 60000);
-                                    var dateString = date.toString();
-                                    if (dateString == "Invalid Date") {
-                                            message.channel.send(":no_entry_sign: ERROR: That ain't a valid timezone, my honeyfry. Don't try to confuse me... *or else...*");
-                                    } else {
-                                            dateString = dateString.substring(0, dateString.lastIndexOf(" "));
-                                            dateString = dateString.substring(0, dateString.lastIndexOf(" "));
-                                            message.channel.send(':arrow_forward: The time now at ' + command + ' is ' + dateString);
-                                    }
-                            } else {
-                                    message.channel.send(":no_entry_sign: ERROR: That ain't a valid timezone, my honeyfry. Don't try to confuse me... *or else...*");
-                            }
-                            message.delete();
-                            commandProcessed = true;
-                    } else if (command.startsWith("attack")) {
-                            command = command.substr(7);
-                            if (command.indexOf("@everyone") == -1) {
-                                    if (command.indexOf("@here") == -1) {
-                                            message.channel.send("<@" + message.author.id + "> :right_facing_fist: " + command);
-                                    } else {
-                                            message.reply("Nice try, but I ain't going to interrupt everyone who is online at this time. Kinda nice to not be bothered.");
-                                    }
-                            } else {
-                                    message.reply("Nice try, but I ain't going to interrupt everyone. Kinda nice to not be bothered.");
-                            }
-                            commandProcessed = true;
-                    } else if (command.startsWith("suggest")) {
-                            command = command.substr(8);
-                            if (message.guild.id == 277922530973581312) {
-                                if (!message.member.roles.has("278338447335489546") && !isMod(message.member)) {
-                                    message.reply(":no_entry_sign: ERROR: Suggestions have been restricted to regulars on this server. Become a regular or speak directly to an admin to suggest something.");
-                                } else {
-                                    suggestStates[message.author.id] = {};
-                                    suggestStates[message.author.id].state = 1;
-                                    suggestStates[message.author.id].guild = message.guild.id;
-                                    suggestStates[message.author.id].suggestion = command;
-                                    suggestStates[message.author.id].startTime = new Date();
-
-                                    message.reply(":arrow_left: Continue in DMs.");
-                                    message.author.send(suggestionStartMessage);
-                                }
-                            } else {
-                                message.reply(":no_entry_sign: ERROR: Suggestions are not accepted on this server via AstralMod. Speak directly to an admin to suggest something.");
-                            }
-                            message.delete();
-                            commandProcessed = true;
-                    } else if (command.startsWith("clock")) {
-                            command = command.substr(6);
-
-                            var indexOfSpace = command.indexOf(" ");
-                            var minutes;
-                            if (indexOfSpace == -1) {
-                                    minutes = parseFloat(command);
-                                    var ms = minutes * 60000;
-
-                                    if (ms <= 0) {
-                                            message.channel.send(":no_entry_sign: ERROR: Yeah... timers don't go for 0 seconds or less.");
-                                    } else if (isNaN(ms) || ms == Infinity || ms == -Infinity) {
-                                            message.channel.send(":no_entry_sign: ERROR: Yeah nice try, but I don't break that easily.");
-                                    } else if (ms > 86400000) {
-                                            message.channel.send(":no_entry_sign: ERROR: Ain't one day enough for ya? I'm not a timekeeper ok? One day is already pushing it...");
-                                    } else {
-                                            var timeout = setTimeout(function () {
-                                                    var msg = "<@" + message.author.id + "> :alarm_clock: Time's up! No description was provided.";
-
-                                                    var mentions = "\nThese people were also mentioned: ";
-                                                    var count = 0;
-                                                    for (let [id, user] of message.mentions.users) {
-                                                            count++;
-                                                            mentions += "<@" + id + "> ";
-                                                    }
-
-                                                    if (count > 0) {
-                                                            msg += mentions;
-                                                    }
-
-                                                    if (isMod(message.member)) {
-                                                            message.channel.send(msg);
-                                                    } else {
-                                                            message.author.send(msg);
-                                                    }
-                                            }, ms);
-
-                                            if (isMod(message.member)) {
-                                                    message.channel.send(":white_check_mark: OK: I will ping <@" + message.author.id + "> in " + minutes + " minutes (" + ms / 1000 + " seconds).");
-                                            } else {
-                                                    message.channel.send(":white_check_mark: OK: I will DM <@" + message.author.id + "> in " + minutes + " minutes (" + ms / 1000 + " seconds).");
-                                            }
-                                    }
-                            } else {
-                                    minutes = parseFloat(command.substring(0, indexOfSpace));
-                                    var reminder = command.substring(indexOfSpace + 1);
-                                    var ms = minutes * 60000;
-
-                                    if (ms <= 0) {
-                                            message.channel.send(":no_entry_sign: ERROR: Yeah... timers don't go for 0 seconds or less.");
-                                    } else if (isNaN(ms) || ms == Infinity || ms == -Infinity) {
-                                            message.channel.send(":no_entry_sign: ERROR: Yeah nice try, but I don't break that easily.");
-                                    } else if (ms > 86400000) {
-                                            message.channel.send(":no_entry_sign: ERROR: Ain't one day enough for ya? I'm not a timekeeper ok? One day is already pushing it...");
-                                    } else {
-                                            var timeout = setTimeout(function () {
-                                                    var msg = "<@" + message.author.id + "> :alarm_clock: Time's up: `" + reminder + "`";
-
-                                                    var mentions = "\nThese people were also mentioned: ";
-                                                    var count = 0;
-                                                    for (let [id, user] of message.mentions.users) {
-                                                            count++;
-                                                            mentions += "<@" + id + "> ";
-                                                    }
-
-                                                    if (count > 0) {
-                                                            msg += mentions;
-                                                    }
-
-                                                    if (isMod(message.member)) {
-                                                            message.channel.send(msg);
-                                                    } else {
-                                                            message.author.send(msg);
-                                                    }
-                                            }, ms);
-
-                                            if (isMod(message.member)) {
-                                                    message.channel.send(":white_check_mark: OK: I will ping <@" + message.author.id + "> in " + minutes + " minutes (" + ms / 1000 + " seconds) to `" + reminder + "`.");
-                                            } else {
-                                                    message.channel.send(":white_check_mark: OK: I will DM <@" + message.author.id + "> in " + minutes + " minutes (" + ms / 1000 + " seconds) to `" + reminder + "`.");
-                                            }
-                                    }
-                                    commandProcessed = true;
-                            }
-                    } else if (command.startsWith("nick")) {
-                            command = command.substr(5);
-                            if (message.guild.id == 277922530973581312) {
-
-                                    if (pendingNickTimeout[message.author.id] == null) {
-                                            pendingNickTimeout[message.author.id] = new Date().getTime() - 86400000;
-                                    }
-
-                                    if (new Date().getTime() > pendingNickTimeout[message.author.id]) {
-                                            pendingNickTimeout[message.author.id] = new Date().getTime() + 86400000;
-
-                                            if (nickExpletiveCheck(command)) {
-                                                    message.channel.send(":no_entry_sign: NO: Preliminary nickname checks failed. Wait until tomorrow and then choose a more... erm... *sensible* nickname please.");
-                                            } else if (command.length >= 32) {
-                                                    message.channel.send(":no_entry_sign: NO: Nicknames need to be less than 32 characters. Wait until tomorrow and then try again.");
-                                            } else {
-                                                    var nick = command;
-                                                    message.channel.send(":white_check_mark: OK: Preliminary nickname checks passed. Your nickname will be changed in 5 minutes if the mods agree with it.");
-
-                                                    pendingNicks[message.author.id] = setTimeout(function () {
-                                                            message.member.setNickname(nick);
-                                                            pendingNicks[message.author.id] = null;
-                                                    }, 300000, null);
-
-                                                    if (nick == "") {
-                                                        client.channels.get("277923386959855626").send("<@" + message.author.id + "> :arrow_right: `[clear]`. `mod:declnick " + message.author.id + "`");
-                                                    } else {
-                                                        client.channels.get("277923386959855626").send("<@" + message.author.id + "> :arrow_right: `" + nick + "`. `mod:declnick " + message.author.id + "`");
-                                                    }
-                                            }
-                                    } else {
-                                            message.channel.send(":no_entry_sign: NO: Cool down. You'll need to wait a day between each change. Ask a mod if you absolutely must have your nickname change *now.*");
-                                    }
-                            } else {
-                                    message.reply(':no_entry_sign: ERROR: Unable to use that command in this server.');
-                            }
-                            commandProcessed = true;
-                    }
-            }
-        } 
-        
-        if (msg.toLowerCase().startsWith("mod:") && !commandProcessed) {
-            //Check for moderator/admin permission
-            
-            //Moderator ID: 282068037664768001
-            //Admin ID:     282068065619804160
-            if (isMod(message.member)) { //Thanks Aren! :D
-                var command = msg.substr(4);
-                switch (command) {
-                    case "filter":
-                        if (message.guild.id != 277922530973581312) {
-                            message.reply(':no_entry_sign: ERROR: Unable to use that command in this server.');
-                        } else {
-                            if (expletiveFilter) {
-                                message.channel.send(':arrow_forward: Expletive Filter: on');
-                            } else {
-                                message.channel.send(':arrow_forward: Expletive Filter: off');
-                            }
-                            message.delete();
-                        }
-                        break;
-                    case "filter on":
-                        if (message.guild.id != 277922530973581312) {
-                            message.reply(':no_entry_sign: ERROR: Unable to use that command in this server.');
-                        } else {
-                            if (expletiveFilter) {
-                                message.channel.send(':arrow_forward: Expletive Filter is already on.');
-                            } else {
-                                expletiveFilter = true;
-                                message.channel.send(':white_check_mark: Expletive Filter is now turned on.');
-                                console.log("[Status] Expletive filter on");
-                                bulletinTimeout = client.setInterval(postBulletin, 60000);
-                            }
-                            message.delete();
-                        }
-                        break;
-                    case "filter off":
-                        if (message.guild.id != 277922530973581312) {
-                            message.reply(':no_entry_sign: ERROR: Unable to use that command in this server.');
-                        } else {
-                            if (expletiveFilter) {
-                                expletiveFilter = false;
-                                message.channel.send(':white_check_mark: Expletive Filter is now turned off.');
-                                console.log("[Status] Expletive filter off");
-                                client.clearInterval(bulletinTimeout);
-                            } else {
-                                message.channel.send(':arrow_forward: Expletive Filter is already off.');
-                            }
-                            message.delete();
-                        }
-                        break;
-                    case "mod":
-                        if (doModeration[message.guild.id]) {
-                            message.channel.send(':arrow_forward: Moderation: on');
-                        } else {
-                            message.channel.send(':arrow_forward: Moderation: off');
-                        }
-                        message.delete();
-                        break;
-                    case "mod on":
-                        if (doModeration[message.guild.id]) {
-                            message.channel.send(':arrow_forward: Moderation is already on.');
-                        } else {
-                            doModeration[message.guild.id] = true;
-                            message.channel.send(':white_check_mark: Moderation is now turned on.');
-                                console.log("[STATUS] Moderation on");
-                        }
-                        message.delete();
-                        break;
-                    case "mod off":
-                        if (doModeration[message.guild.id]) {
-                            doModeration[message.guild.id] = false;
-                            message.channel.send(':white_check_mark: Moderation is now turned off. All messages on this server, spam, profane or whatever will be allowed through.');
-                            console.log("[STATUS] Moderation off");
-                        } else {
-                            message.channel.send(':arrow_forward: Moderation is already off.');
-                        }
-                        message.delete();
-                        break;
-                    case "panic":
-                        message.channel.send(':rotating_light: Panic mode is now on. All message sending for this server has been turned off.').then(function() {
-                            panicMode[message.guild.id] = true;
-                        });
-                        console.log("[STATUS] Panic on");
-                        message.delete();
-                        break;
-                    case "fetch":
-                        message.reply("Give me a minute...").then(function(newMessage, messageArray) {
-                            message.guild.fetchMembers().then(function() {
-                                message.reply(":white_check_mark: All members for this guild fetched.");
-                                newMessage.delete();
-                            }).catch(function() {
-                                message.reply(":no_entry_sign: Something didn't work.");
-                                newMessage.delete();
-                            });
-                        });
-                        message.delete();
-                        break;
-                    case "forceprepchat":
-                        allowPrepChat = true;
-                        //fall through
-                    case "prepchat":
-                        var numberOfMembers = 15;
-                        if (message.guild.id != 277922530973581312) {
-                            message.reply(':no_entry_sign: ERROR: Unable to use that command in this server.');
-                        } else if (!allowPrepChat) {
-                            message.reply(':no_entry_sign: ERROR: Command was run less than a minute ago. To override this, use `mod:forceprepchat`');
-                        } else {
-                            var waitingRoom = client.channels.get("277924441584041985");
-
-                            membersInWaitingRoom = Array.from(waitingRoom.members.values());
-
-                            for (var i = 0; i < membersInWaitingRoom.length; i++) {
-                                var member = membersInWaitingRoom[i];
-                                if (member.selfMute || member.serverMute || member.id == 282048599574052864 || isMod(member)) {
-                                    membersInWaitingRoom.splice(i, 1);
-                                    i--;
-                                }
-                            }
-
-                            var placeMemberFunction = function() {
-                                numberOfMembersTried++;
-                                if (membersInWaitingRoom.length != 0) {
-                                    //Choose a random member
-                                    var chosenMember = membersInWaitingRoom.splice(Math.floor(Math.random() * 1000) % membersInWaitingRoom.length, 1)[0];
-                                    chosenMember.setVoiceChannel("277922530973581313").then(function() {
-                                        chosenMember.addRole(message.guild.roles.get("328075669080768514"));
-                                        console.log("Member placed in weekly chat");
-                                        membersPlaced.push(chosenMember);
-                                        message.channel.send(":speech_balloon: `" + getUserString(chosenMember) + "` was placed into the Weekly Chat")
-                                        //postFeedbackFunction();
-                                    }).catch(function() {
-                                        console.log("Member couldn't be placed in weekly chat");
-                                        message.channel.send(":speech_balloon: `" + getUserString(chosenMember) + "` was unable to be placed into the Weekly Chat")
-                                        //postFeedbackFunction();
-                                    });
-                                    return true;
-                                } else {
-                                    console.log("No more members to place in weekly chat");
-                                    return false;
-                                    //postFeedbackFunction();
-                                }
-                            }
-
-                            var changeAllowPrepChat = true;
-
-                            for (var i = 0; i < numberOfMembers; i++) {
-                                if (placeMemberFunction()) {
-                                   if (i == numberOfMembers - 1) {
-                                        //Turn on filter
-                                        expletiveFilter = true;
-                                
-                                        message.channel.send(":speech_balloon: " + parseInt(numberOfMembers) + " people have been queued to be moved to the weekly chat. The filter has been switched on.")
-                                    }
-                                } else {
-                                    if (i == 0) {
-                                        message.channel.send(":speech_balloon: No eligible members were found in the waiting room.")
-                                        changeAllowPrepChat = false;
-                                    } else {
-                                        message.channel.send(":speech_balloon: There are only " + parseInt(i) + " eligible members in the weekly chat and all of them have been queued to be moved in. The filter has been switched on.")
-                                        
-                                        //Turn on filter
-                                        expletiveFilter = true;
-                                    }
-                                    i = numberOfMembers;
-                                }
-                            }
-
-                            message.delete();
-                            
-                            if (changeAllowPrepChat) {
-                                allowPrepChat = false;
-                                setTimeout(function() {
-                                    allowPrepChat = true;
-                                }, 60000);
-                            }
-                        }
-                        break;
-                    case "stopchat":
-                        if (message.guild.id != 277922530973581312) {
-                            message.reply(':no_entry_sign: ERROR: Unable to use that command in this server.');
-                        } else {
-                            message.guild.roles.get("328075669080768514").members.forEach(function(cmember) {
-                                cmember.removeRole(message.guild.roles.get("328075669080768514"));
-                            });
-                            message.channel.send(":speech_balloon: All weekly chat-ees have the Chatroom Phil permissions revoked.");
-                        }
-                        message.delete();
-                        break;
-                    case "help":
-                        var helpMessage = "And here are the mod only commands:\n```\n" +
-                            "mod    [on|off]   Queries moderation status.\n" +
-                            "                  PARAMETER 1 (OPTIONAL)\n" + 
-                            "                  Type on to start moderating the server.\n" +
-                            "                  Type off to stop moderating the server.\n\n";
-                            
-                        if (message.guild.id == 277922530973581312) { //APHC specific stuff
-                        helpMessage = helpMessage + 
-                            "filter [on|off]   Queries the chat filter.\n" +
-                            "                  PARAMETER 1 (OPTIONAL)\n" + 
-                            "                  Type on to set the filter on.\n" +
-                            "                  Type off to set the filter off.\n\n" +
-                            "prepchat          Moves people into Chatroom Phil for\n" +
-                            "                  the AstralPhaser Weekly Chat\n\n";
-                        }
-                            
-                        helpMessage = helpMessage + 
-                            "deal user         Walks through the process of dealing\n" +
-                            "                  with an unruly member\n\n" +
-                            "rm num            Deletes a number of messages.\n" +
-                            "                  PARAMETER 1\n" +
-                            "                  Number of messages to delete.\n\n" +
-                            "uinfo user        Gets information about a user.\n" +
-                            "                  PARAMETER 1\n" +
-                            "                  User ID. This can be obtained with the\n" +
-                            "                  rtid command. Alternatively use a @mention.\n\n" +
-                            "rtid user         Gets a user's user ID.\n" +
-                            "                  PARAMETER 1\n" +
-                            "                  Username of the user to find.\n\n" +
-                            "clock min [rem]   Sets a timer. This cannot be cancelled.\n" +
-                            "                  PARAMETER 1\n" +
-                            "                  Number of minutes to set the timer for.\n" +
-                            "                  PARAMETER 2 (OPTIONAL)\n" +
-                            "                  Reminder to be sent with the message.\n\n" +
-                            "panic       -     Toggles panic mode.\n" +
-                            "cancel            Cancels a pending operation.\n" +
-                            "help              Prints this help message.\n" +
-                            "\n" +
-                            "- denotes an admin only command\n" +
-                            "These commands need to be prefixed with mod:\n" +
-                            "```";
-                            
-                        message.channel.send(helpMessage);
-                        break;
-                    case "cmd":
-                        if (message.author.id == 278805875978928128 || message.author.id == 175760550070845451 || message.author.id == 209829628796338176) {
-                            runningCommands = false;
-                            message.reply(':white_check_mark: OK: AstralMod commands have been stopped in all servers, and moderation has been turned off in all servers.');
-                        } else {
-                            message.reply(':no_entry_sign: NO: Only 3 special people are allowed to use this command. To turn off moderation, use `mod:mod off`.');
-                        }
-                        break;
-                    case "cancel":
-                        if (poweroff) {
-                            poweroff = false;
-                            message.channel.send(':white_check_mark: OK, I won\'t leave... yet.')
-                        } else {
-                            message.reply(':no_entry_sign: ERROR: Nothing to cancel.');
-                        }
-                        message.delete();
-                        break;
-                    case "banterrogate":
-                        if (message.guild.id != 277922530973581312) {
-                            message.reply(':no_entry_sign: ERROR: Unable to use that command in this server.');
-                        } else {
-                            if (interrogMember == null) {
-                                message.reply(':no_entry_sign: ERROR: No user to banterrogate. See mod:help for more information.');
-                            } else {
-                                if (interrogMember.guild.id == 277922530973581312) {
-                                    interrogMember.send("You seem to be someone that has been making alts. If you're not, then to appeal, get in touch with vicr123#5096. Sorry about the kick. We've had to do this because of a special someone trying to break the rules.");
-                                    interrogMember.ban();
-                                    message.channel.send(':white_check_mark: OK: User has been banterrogated!');
-                                    interrogMember = null;
-                                } else {
-                                    message.reply(':no_entry_sign: ERROR: No user to interrogate. See mod:help for more information.');
-                                }
-                            }
-                        }
-                        message.delete();
-                        break;
-					default:
-						if (command.startsWith("uinfo")) {
-							command = command.substr(6);
-							command = command.replace("<", "").replace(">", "").replace("@", "").replace("!", "");
-
-							message.guild.fetchMember(command).then(function (member) {
-								embed = new Discord.RichEmbed("test");
-								embed.setAuthor(getUserString(member), member.user.displayAvatarURL);
-								embed.setColor("#FF0000");
-								embed.setDescription("User Information");
-
-								{
-									var msg = "**Created** " + member.user.createdAt.toUTCString() + "\n";
-									if (member.joinedAt.getTime() == 0) {
-										msg += "**Joined** -∞... and beyond! Discord seems to be giving incorrect info... :(";
-									} else {
-										msg += "**Joined** " + member.joinedAt.toUTCString();
-									}
-
-									embed.addField("Timestamps", msg);
-								}
-
-								{
-									var msg = "**Current Display Name** " + member.displayName + "\n";
-									msg += "**Username** " + member.user.username + "\n";
-									if (member.nickname != null) {
-										msg += "**Nickname** " + member.nickname;
-									} else {
-										msg += "**Nickname** No nickname";
-									}
-
-									embed.addField("Names", msg);
-								}
-
-                                /*if (member.lastMessageID != null) {
-                                    var lastMessage = null;
-                                    
-                                    message.channel.fetchMessage(member.lastMessage).then(function(retrievedMessage) {
-                                        lastMessage = retrievedMessage;
-                                    }).catch(function () {
-                                        lastMessage = -1;
-                                    });
-                                    
-                                    while (lastMessage == null) {}
-                                    
-                                    if (lastMessage != -1) {
-                                        var msg = "**ID** " + member.lastMessageID + "\n";
-                                        msg += "**Contents** " + lastMessage.content;
-                                        
-                                        embed.addField("Last Message", msg);
-                                    }
-                                }*/
-
-								embed.setFooter("User ID: " + member.user.id);
-								//embed.setDescription(msg);
-								message.channel.send("", {embed: embed});
-
-								lastUserInteraction[message.guild.id] = command;
-							}).catch(function (reason) {
-								switch (Math.floor(Math.random() * 1000) % 3) {
-									case 0:
-										message.channel.send(':no_entry_sign: ERROR: That didn\'t work. You might want to try again.');
-										break;
-									case 1:
-										message.channel.send(':no_entry_sign: ERROR: Something\'s blocking us! You might want to try again.');
-										break;
-									case 2:
-										message.channel.send(':no_entry_sign: ERROR: Too much cosmic interference! You might want to try again.');
-										break;
-								}
-							});
-						} else if (command.startsWith("rtid")) {
-							command = command.substr(5);
-							//Find a user's ID based on given name
-
-							var foundUsers = client.users.findAll("username", command);
-							if (foundUsers.length == 0) {
-								message.channel.send(':no_entry_sign: ERROR: Couldn\'t find anyone with that username. You might want to try again.');
-							} else {
-								var reply = ":white_check_mark: OK: We found " + parseInt(foundUsers.length) + " users with that username.\n```\n";
-								for (let user of foundUsers) {
-									reply += getUserString(user) + ": " + user.id + "\n";
-
-									message.guild.fetchMember(user).then(function (member) {
-										message.channel.send(":white_check_mark: " + getUserString(user) + " exists on this server.");
-									}).catch(function () {
-										message.channel.send(":no_entry_sign: " + getUserString(user) + " does not exist on this server.");
-									});
-								}
-								reply += "```";
-								message.channel.send(reply);
-							}
-							message.delete();
-						} else if (command.startsWith("cancel")) {
-							command = command.substr(7);
-
-							if (command.startsWith("clock")) {
-								command = command.substr(6);
-
-								clearTimeout(parseInt(command));
-								message.channel.send(":white_check_mark: OK: If a timer with the ID `" + command + "` exists, it has been cancelled.");
-							} else {
-								message.channel.send(":no_entry_sign: ERROR: Not sure what to cancel.");
-							}
-						} else if (command.startsWith("deal") || command.startsWith("manage")) {
-							if (actioningMember[message.guild.id] != null) {
-                                message.channel.send(':no_entry_sign: ERROR: ' + getUserString(actioningMember[message.guild.id]) + " is already managing another user.");
-							} else {
-                                if (command.startsWith("deal")) {
-                                    command = command.substr(5);
-                                } else if (command.startsWith("manage")) {
-                                    command = command.substr(7);
-                                }
-								command = command.replace("<", "").replace(">", "").replace("@", "").replace("!", "");
-
-								message.guild.fetchMember(command).then(function (member) {
-                                    if (member.highestRole.comparePositionTo(message.member.highestRole) >= 0) {
-                                        message.channel.send(":gear: Cannot manage " + getUserString(member) + ".");
-                                    } else {
-                                        var canDoActions = false;
-                                        var msg = ':gear: ' + getUserString(member) + ": `cancel` ";
-                                        if (member.kickable) {
-                                            msg += '`(k)ick` ';
-                                            canDoActions = true;
-                                        }
-                                        
-                                        if (member.bannable) {
-                                            msg += '`(b)an` `(n)ick` ';
-                                            canDoActions = true;
-                                        }
-                                        
-                                        if (message.guild.id == 287937616685301762 || message.guild.id == 277922530973581312) {
-                                            msg += "`(i)nterrogate` ";
-                                            canDoActions = true;
-                                        }
-                                        
-                                        if (message.guild.id == 277922530973581312 || message.guild.id == 263368501928919040) {
-                                            msg += "`(j)ail` ";
-                                            canDoActions = true;
-                                        }
-                                        
-                                        if (message.guild.id == 277922530973581312) {
-                                            msg += "`(m)ute` ";
-                                            canDoActions = true;
-                                        }
-                                        
-                                        if (canDoActions) {
-                                            actionMember[message.guild.id] = member;
-                                            actioningMember[message.guild.id] = message.author;
-                                            actionStage[message.guild.id] = 0;
-                                            message.channel.send(msg);
-                                        } else {
-                                            message.channel.send(":gear: Cannot manage " + getUserString(member) + ".");
-                                        }
-                                    }
-								}).catch(function (reason) {
-									switch (Math.floor(Math.random() * 1000) % 3) {
-										case 0:
-											message.channel.send(':no_entry_sign: ERROR: That didn\'t work. You might want to try again.');
-											break;
-										case 1:
-											message.channel.send(':no_entry_sign: ERROR: Something\'s blocking us! You might want to try again.');
-											break;
-										case 2:
-											message.channel.send(':no_entry_sign: ERROR: Too much cosmic interference! You might want to try again.');
-											break;
-									}
-								});
-							}
-							message.delete();
-						} else if (command.startsWith("rm")) {
-							command = command.substr(3);
-							var num = parseInt(command);
-							if (num != command) {
-								message.channel.send(":no_entry_sign: ERROR: That's not a number...");
-							} else {
-								num = num + 1; //Also remove the mod:rm command
-								message.channel.bulkDelete(num).then(function () {
-                                    if (num == 2) {
-                                        message.channel.send(":white_check_mark: OK: I successfully deleted 1 message.");
-                                    } else if (num >= 99) {
-                                        message.channel.send(":no_entry_sign: ERROR: I am unable to delete more than 99 messages at one time.");
-                                    } else {
-                                        message.channel.send(":white_check_mark: OK: I successfully deleted " + command + " messages.");
-                                    }
-								}).catch(function () {
-                                    if (num >= 99) {
-                                        message.channel.send(":no_entry_sign: ERROR: I am unable to delete more than 99 messages at one time.");
-                                    } else {
-                                        switch (Math.floor(Math.random() * 1000) % 3) {
-                                            case 0:
-                                                message.channel.send(':no_entry_sign: ERROR: That didn\'t work. You might want to try again.');
-                                                break;
-                                            case 1:
-                                                message.channel.send(':no_entry_sign: ERROR: Something\'s blocking us! You might want to try again.');
-                                                break;
-                                            case 2:
-                                                message.channel.send(':no_entry_sign: ERROR: Too much cosmic interference! You might want to try again.');
-                                                break;
-                                        }
-                                    }
-								});
-							}
-						} else if (command.startsWith("declnick")) {
-							command = command.substr(9);
-							if (pendingNicks[command] != null) {
-								clearTimeout(pendingNicks[command]);
-								pendingNicks[command] = null;
-								message.channel.send(':white_check_mark: OK: User nickname change has been cancelled.');
-							} else {
-								message.channel.send(':no_entry_sign: ERROR: That didn\'t work. Has 5 minutes passed?');
-							}
-						}
-                }
-                
-                if (command == "poweroff") {
-                    if (message.author.id == 278805875978928128 || message.author.id == 241299743869894667 || message.author.id == 113060599566508032) {
-                        if (poweroff) {
-                            switch (Math.floor(Math.random() * 1000) % 3) {
-                                case 0:
-                                    message.channel.send(':white_check_mark: AstralMod is now exiting. Goodbye!').then(function() {
-                                        process.exit(0);
-                                    }).catch(function() {
-                                        process.exit(0);
-                                    });
-                                    break;
-                                case 1:
-                                    message.channel.send(':white_check_mark: Gah! Byte form is so last week!').then(function() {
-                                        process.exit(0);
-                                    }).catch(function() {
-                                        process.exit(0);
-                                    });
-                                    break;
-                                case 2:
-                                    message.channel.send(':white_check_mark: They saw... right through me...').then(function() {
-                                        process.exit(0);
-                                    }).catch(function() {
-                                        process.exit(0);
-                                    });
-                                    break;
-                            }
-                        } else {
-                            message.channel.send(':information_source: If you\'re just trying to stop AstralMod from moderating, use `mod:mod off` instead. Otherwise, to power off AstralMod, type in `mod:poweroff` again.');
-                            poweroff = true;
-                        }
-                    } else {
-                        message.reply(':no_entry_sign: NO: Only 3 special people are allowed to power off the bot. To turn off moderation, use `mod:mod off`.');
-                    }
-                } else {
-                    poweroff = false;
-                }
-            } else {
-                message.reply(':no_entry_sign: NO: What? You\'re not a member of the staff! Why would you be allowed to type that!?');
-                message.delete();
-            }
-        }
-        
-        var performModerationOnMessage = true;
-        //Check for images.
-        //Other attachments are ok.
-        if (message.attachments != null) {
-            for (let [key, attachment] of message.attachments) {
-                if (attachment.height != null) {
-                    performModerationOnMessage = false;
-                    break;
-                }
-            }
-        }
-        
-        if (doModeration[message.guild.id] && performModerationOnMessage) { //Check if we should do moderation on this server. If message contains an attachment, ignore it.
-            //Spam limiting
-            if (lastMessages[message.author.id] != msg) {
-                sameMessageCount[message.author.id] = 0;
-            }
-            lastMessages[message.author.id] = msg
-            sameMessageCount[message.author.id] += 1;
-            
-            if (lastMessages[message.author.id] == msg && sameMessageCount[message.author.id] == 10) {
-                var auth = message.author;
-                if (message.guild.id == 277922530973581312) { //AstralPhaser
-                    client.channels.get("282513354118004747").send(":red_circle: " + getUserString(auth) + " was spamming on " + message.channel.name + ".");
-                } else if (message.guild.id == 278824407743463424) { //theShell
-                    client.channels.get("283184634400079872").send(":red_circle: " + getUserString(auth) + " was spamming on " + message.channel.name + ".");
-                } else if (message.guild.id == 281066689892974592) { //LE
-                    client.channels.get("288272065109295104").send(":red_circle: " + getUserString(auth) + " was spamming on " + message.channel.name + ".");
-                } else if (message.guild.id == 263368501928919040) { //TWOW
-                    client.channels.get("314589053959929866").send(":red_circle: " + getUserString(auth) + " was spamming on " + message.channel.name + ".");
-                } else if (message.guild.id == 305039436490735627) { //STTA
-                    client.channels.get("310017630964809738").send(":red_circle: " + getUserString(auth) + " was spamming on " + message.channel.name + ".");
-                }
-                
-                message.reply("Quite enough of this. I'm not warning you any more. (A notification has been sent to the mods.)");
-                message.delete();
-            } else if (lastMessages[message.author.id] == msg && sameMessageCount[message.author.id] > 10) {
-                message.delete();
-            } else if (lastMessages[message.author.id] == msg && sameMessageCount[message.author.id] > 3) {
-                console.log("[FILTER] Spam detected by " + getUserString(message.author));
-                switch (Math.floor(Math.random() * 1000) % 5) {
-                    case 0:
-                        message.reply("Well... We all heard you.");
-                        break;
-                    case 1:
-                        message.reply("Stop typing the same thing! You're like a broken record!");
-                        break;
-                    case 2:
-                        message.reply("Hmm... Not sure if you'd actually say the same thing more than three times in public.");
-                        break;
-                    case 3:
-                        message.reply("Is that the only phrase you know? Can you try typing something else?");
-                        break;
-                    case 4:
-                        message.reply("Pollution is not the solution, my honeyfry.");
-                        break;
-                }
-            
-                message.delete();
-            } else if (smallMessageCount[message.author.id] == 10) {
-                var auth = message.author;
-                if (message.guild.id == 277922530973581312) { //AstralPhaser
-                    client.channels.get("282513354118004747").send(":red_circle: " + getUserString(auth) + " was spamming on " + message.channel.name + ".");
-                } else if (message.guild.id == 278824407743463424) { //theShell
-                    client.channels.get("283184634400079872").send(":red_circle: " + getUserString(auth) + " was spamming on " + message.channel.name + ".");
-                } else if (message.guild.id == 281066689892974592) { //LE
-                    client.channels.get("288272065109295104").send(":red_circle: " + getUserString(auth) + " was spamming on " + message.channel.name + ".");
-                } else if (message.guild.id == 263368501928919040) { //TWOW
-                    client.channels.get("314589053959929866").send(":red_circle: " + getUserString(auth) + " was spamming on " + message.channel.name + ".");
-                } else if (message.guild.id == 305039436490735627) { //STTA
-                    client.channels.get("310017630964809738").send(":red_circle: " + getUserString(auth) + " was spamming on " + message.channel.name + ".");
-                }
-                message.reply("Quite enough of this. I'm not warning you any more. (A notification has been sent to the mods.)");
-                message.delete();
-                console.log("[FILTER] Spam notification sent by " + getUserString(message.author));
-            } else if (smallMessageCount[message.author.id] > 10) {
-                message.delete();
-            } else if (smallMessageCount[message.author.id] > 5) {
-                console.log("[FILTER] Spam detected by " + getUserString(message.author));
-                switch (Math.floor(Math.random() * 1000) % 4) {
-                    case 0:
-                        message.reply("This looks like spam. And we don't like spam.");
-                        break;
-                    case 1:
-                        message.reply("Cut it out.");
-                        break;
-                    case 2:
-                        message.reply("Very... scribbly...");
-                        break;
-                    case 3:
-                        message.reply("If you're going to type that, why not get out a pen and paper and do it yourself?");
-                        break;
-                }
-                
-                message.delete();
-            }
+function newGuild(guild) {
+    log("New Guild: " + guild.id, logType.info);
+    settings.guilds[guild.id] = {
+        requiresConfig: true
+    };
+    
+    
+    if (process.argv.indexOf("--nowelcome") == -1) {
+        if (guild.defaultChannel) {
+            guild.defaultChannel.send(":wave: Welcome to AstralMod! To get started, " + guild.owner.displayName + " or vicr123 needs to type `" + prefix + "config`.");
         }
     }
 }
 
-client.on('message', messageChecker);
-client.on('messageUpdate', messageChecker);
+function removeGuild(guild) {
+    //Delete guild from database
+    settings.guilds[guild.id] = null;
+    delete settings.guilds[guild.id];
+    log("Removed Guild: " + guild.id, logType.info);
+}
 
-client.on('guildMemberAdd', function(guildMember) {
-    if (guildMember.guild.id == 277922530973581312 || guildMember.guild.id == 278824407743463424 || guildMember.guild.id == 263368501928919040 || guildMember.guild.id == 287937616685301762) {
-        var channel;
-        if (guildMember.guild.id == 277922530973581312) {
-            channel = client.channels.get("284837615830695936");
-            console.log("[STATUS] " + getUserString(guildMember) + " --> APHC");
-        } else if (guildMember.guild.id == 263368501928919040) {
-            channel = client.channels.get("314589053959929866");
-            console.log("[STATUS] " + getUserString(guildMember) + " --> TWOW");
-        } else if (guildMember.guild.id == 287937616685301762) {
-            channel = client.channels.get("326970091683971072");
-            console.log("[STATUS] " + getUserString(guildMember) + " --> WoW");
-        } else if (guildMember.guild.id == 305039436490735627) {
-            channel = client.channels.get("332750228975517699");
-            console.log("[STATUS] " + getUserString(guildMember) + " --> STTA");
+function saveSettings(showOkMessage = false) {
+    log("Saving settings...");
+    var contents = JSON.stringify(settings, null, 4);
+
+    //Encrypt the contents
+    var cipher = crypto.createCipher(cipherAlg, keys.settingsKey);
+    var settingsJson = Buffer.concat([cipher.update(Buffer.from(contents, "utf8")), cipher.final()]);
+
+    //Write to secondary file first
+    fs.writeFile("settings.prewrite.json", settingsJson, "utf8", function(error) {
+        if (error) {
+            log("Settings couldn't be saved", logType.critical);
+            setTimeout(saveSettings, 30000);
         } else {
-            channel = client.channels.get("320422079130238980");
-            console.log("[STATUS] " + getUserString(guildMember) + " --> ts");
-        }
-        interrogMember = guildMember;
-        
-        channel.send(":arrow_right: <@" + guildMember.user.id + ">");
-        
-        embed = new Discord.RichEmbed();
-        embed.setAuthor(guildMember.displayName, guildMember.user.displayAvatarURL);
-        embed.setColor("#FF0000");
-        var msg = "Discriminator: " + guildMember.user.discriminator + "\n" + 
-                    "Created at: " + guildMember.user.createdAt.toUTCString() + "\n";
-        if (guildMember.joinedAt.toUTCString() == "Thu, 01 Jan 1970 00:00:00 GMT") {
-            msg += "Joined at: -∞... and beyond! Discord seems to be giving incorrect info... :(";
-        } else {
-            msg += "Joined at: " + guildMember.joinedAt.toUTCString();
-        }
-        embed.setDescription(msg);
-        embed.setFooter("User ID for moderation actions: " + guildMember.user.id);
-        channel.send("", {embed: embed});
-        
-        if (guildMember.guild.id == 287937616685301762) {
-            var now = new Date();
-            var joinDate = guildMember.user.createdAt;
-            if (joinDate.getDate() == now.getDate() && joinDate.getMonth() == now.getMonth() && joinDate.getFullYear() == now.getFullYear()) {
-                if (guildMember.guild.id == 287937616685301762) {
-                    channel.send(":calendar: <@&326915978392764426> This member was created today.");
+            fs.writeFile("settings.json", settingsJson, "utf8", function(error) {
+                if (error) {
+                    log("Settings couldn't be saved, but the prewrite settings were saved successfully.", logType.critical);
+                } else {
+                    fs.unlinkSync("settings.prewrite.json");
+
+                    if (showOkMessage) {
+                        log("Settings saved!", logType.good);
+                    } else {
+                        log("Settings saved!");
+                    }
                 }
-            }
-        }
-    }
-});
 
-client.on('guildMemberUpdate', function(oldUser, newUser) {
-    if (newUser.guild.id == 277922530973581312) {
-        if (newUser.roles.find("name", "Jailed")) {
-            console.log("[STATUS] " + getUserString(newUser) + " --> JAIL");
-            client.channels.get("277943393231831040").send("<@" + newUser.id + "> :oncoming_police_car: You are now in jail. Appeal here to get out of jail. If you do not appeal successfully within 24 hours, an admin will **ban** you from the server.\n\n" + 
-            "Additionally, if you leave and rejoin this server in an attempt to break out of jail, you will be **banned.**\n\n" + 
-            "Timestamp: " + new Date().toUTCString());
+                setTimeout(saveSettings, 30000);
+            });
         }
-        
-        if (newUser.roles.find("name", "Interrogation")) {
-            console.log("[STATUS] " + getUserString(newUser) + " --> INTERROGATION APHC");
-            client.channels.get("292630922040311808").send("<@" + newUser.id + "> :oncoming_police_car: A member of staff just wishes to make sure you're not someone we've banned before. If you have any social media accounts, just tell us so we can see that you're not someone that we've banned :)");
-        }
-        
-        if (newUser.nickname != oldUser.nickname) {
-            console.log("[STATUS] " + getUserString(newUser) + " --> N(" + newUser.nickname + ")");
-            var channel = client.channels.get("282513354118004747"); //Bot Warnings
-            if (newUser.nickname == null) {
-                channel.send(":abcd: " + getUserString(oldUser) + " :arrow_right: [cleared]");
-            } else {
-                channel.send(":abcd: " + getUserString(oldUser) + " :arrow_right: " + newUser.nickname);
-            }
-        }
-    } else if (newUser.guild.id == 287937616685301762) {
-        if (newUser.roles.find("name", "interrogation")) {
-            console.log("[STATUS] " + getUserString(newUser) + " --> INTERROGATION WOW");
-            client.channels.get("319848725566586890").send("<@" + newUser.id + "> :oncoming_police_car: A member of staff just wishes to make sure you're not someone we've banned before. :)");
-        }
-    }
-});
+    });
+}
 
-client.on('userUpdate', function(oldUser, newUser) {
-    if (newUser.username != oldUser.username) {
-        
-        var aphcGuild = client.channels.get("282513354118004747").guild;
-        aphcGuild.fetchMember(newUser).then(function(member) {
-            console.log("[STATUS] " + getUserString(oldUser) + " --> U(" + newUser.username + ")");
-            var channel = client.channels.get("282513354118004747"); //Admin Bot warnings
-            channel.send(":ab: " + getUserString(oldUser) + " :arrow_right: " + newUser.username + ". Check spreadsheet!");
-        }).catch(function() {
-            
-        });
-    }
-});
-
-client.on('guildMemberRemove', function(user) {
-    if (user.roles.find("name", "I Broke The Rules!")) {
-            console.log("[STATUS] !!! <-- " + getUserString(user));
-        client.channels.get("277943393231831040").send(":arrow_left: <@" + user.id + "> has left the server in jail.");
-    }
-    
-    if (user.guild != null) {
-        if (user.guild.id == 277922530973581312 || user.guild.id == 278824407743463424 || user.guild.id == 263368501928919040 || user.guild.id == 287937616685301762 || user.guild.id == 305039436490735627) {
-            var channel;
-            if (user.guild.id == 277922530973581312) {
-                channel = client.channels.get("284837615830695936");
-                console.log("[STATUS] APHC <-- " + getUserString(user));
-            } else if (user.guild.id == 263368501928919040) {
-                channel = client.channels.get("314589053959929866");
-                console.log("[STATUS] TWOW <-- " + getUserString(user));
-            } else if (user.guild.id == 287937616685301762) {
-                channel = client.channels.get("326970091683971072");
-                console.log("[STATUS] WoW <-- " + getUserString(user));
-            } else if (user.guild.id == 305039436490735627) {
-                channel = client.channels.get("332750228975517699");
-                console.log("[STATUS] STTA <-- " + getUserString(user));
-            } else {
-                channel = client.channels.get("320422079130238980");
-                console.log("[STATUS] ts <-- " + getUserString(user));
-            }
-            
-            channel.send(":arrow_left: <@" + user.user.id + "> (" + user.displayName + "#" + user.user.discriminator + ")");
-        }
-    }
-});
-
-client.on('messageDelete', function(message) {
-    if (message.content.startsWith("bot:") || message.content.startsWith("mod:")) return; //Don't want to warn about AstralMod deleted messages
-    if (message.author.id == 277949276540239873) return; //Ignore AstralPlayer
+function messageDeleted(message) {
     var channel = null;
-    
     if (message.guild != null) {
-        if (panicMode[message.guild.id]) return; //Don't want to be doing this in panic mode!
-        if (message.guild.id == 140241956843290625) return; //Ignore TGL
-          
-        if (message.guild.id == 277922530973581312) { //AstralPhaser Central
-            channel = client.channels.get("290439711258968065");
-        } else if (message.guild.id == 278824407743463424) { //theShell
-            channel = client.channels.get("290444399731671040");
-        } else if (message.guild.id == 287937616685301762) { //WoW
-            channel = client.channels.get("295498899370803200");
-        } else if (message.guild.id == 297057036292849680) { //ALA
-            channel = client.channels.get("297762292823490570");
-        } else if (message.guild.id == 281066689892974592) { //LE
-            channel = client.channels.get("302821411821453312");
-        } else if (message.guild.id == 266018132827570176) { //TH
-            channel = client.channels.get("306041264933961728");
-        } else if (message.guild.id == 263368501928919040) { //TWOW
-            channel = client.channels.get("323825759393153025");
-        } else if (message.guild.id == 305039436490735627) { //STTA
-            channel = client.channels.get("332735413645082626");
+        if (settings.guilds[message.guild.id].chatLogs != null) {
+            if (client.channels.has(settings.guilds[message.guild.id].chatLogs)) {
+                channel = client.channels.get(settings.guilds[message.guild.id].chatLogs);
+            } else {
+                log("Chat Logs channel " + settings.guilds[message.guild.id].chatLogs + " not found", logType.critical);
+            }
         }
     }
     
@@ -2254,66 +2688,21 @@ client.on('messageDelete', function(message) {
                 }
             }
         }
-            
+        
         channel.send(msg);
     }
-});
+}
 
-client.on('messageDeleteBulk', function(messages) {
-    var channel = null;
-    
-    if (messages.first().guild != null) {
-        if (panicMode[messages.first().guild.id]) return; //Don't want to be doing this in panic mode!
-        if (messages.first().guild.id == 140241956843290625) return; //Ignore TGL
-          
-        if (messages.first().guild.id == 277922530973581312) { //AstralPhaser Central
-            channel = client.channels.get("290439711258968065");
-        } else if (messages.first().guild.id == 278824407743463424) { //theShell
-            channel = client.channels.get("290444399731671040");
-        } else if (messages.first().guild.id == 287937616685301762) { //WoW
-            channel = client.channels.get("295498899370803200");
-        } else if (messages.first().guild.id == 297057036292849680) { //ALA
-            channel = client.channels.get("297762292823490570");
-        } else if (messages.first().guild.id == 281066689892974592) { //LE
-            channel = client.channels.get("302821411821453312");
-        } else if (messages.first().guild.id == 266018132827570176) { //TH
-            channel = client.channels.get("306041264933961728");
-        } else if (messages.first().guild.id == 263368501928919040) { //TWOW
-            channel = client.channels.get("323825759393153025");
-        } else if (messages.first().guild.id == 305039436490735627) { //STTA
-            channel = client.channels.get("332735413645082626");
-        }
-    }
-    
-    if (channel != null) {
-        var message = ":wastebasket: " + parseInt(messages.length) + " messages in <#" + messages.first().channel.id + "> were deleted.\n"
-        for (let [key, msg] of messages) {
-            message += "```" + msg.cleanContent + "```";
-        }
-        channel.send(message);
-    }
-});
-
-client.on('messageUpdate', function(oldMessage, newMessage) {
+function messageUpdated(oldMessage, newMessage) {
     if (oldMessage.cleanContent == newMessage.cleanContent) return; //Ignore
     var channel = null;
     if (oldMessage.guild != null) {
-        if (oldMessage.guild.id == 277922530973581312) { //AstralPhaser Central
-            channel = client.channels.get("290439711258968065");
-        } else if (oldMessage.guild.id == 278824407743463424) { //theShell
-            channel = client.channels.get("290444399731671040");
-        } else if (oldMessage.guild.id == 287937616685301762) { //WoW
-            channel = client.channels.get("295498899370803200");
-        } else if (oldMessage.guild.id == 297057036292849680) { //ALA
-            channel = client.channels.get("297762292823490570");
-        } else if (oldMessage.guild.id == 281066689892974592) { //LE
-            channel = client.channels.get("302821411821453312");
-        } else if (oldMessage.guild.id == 266018132827570176) { //TH
-            channel = client.channels.get("306041264933961728");
-        } else if (oldMessage.guild.id == 263368501928919040) { //TWOW
-            channel = client.channels.get("323825759393153025");
-        } else if (oldMessage.guild.id == 305039436490735627) { //STTA
-            channel = client.channels.get("332735413645082626");
+        if (settings.guilds[oldMessage.guild.id].chatLogs != null) {
+            if (client.channels.has(settings.guilds[oldMessage.guild.id].chatLogs)) {
+                channel = client.channels.get(settings.guilds[oldMessage.guild.id].chatLogs);
+            } else {
+                log("Chat Logs channel " + settings.guilds[oldMessage.guild.id].chatLogs + " not found", logType.critical);
+            }
         }
     }
     
@@ -2347,33 +2736,516 @@ client.on('messageUpdate', function(oldMessage, newMessage) {
             
         channel.send(msg);
     }
-});
+}
 
-client.on("guildBanAdd", function(guild, user) {
-    if (guild.id == 277922530973581312) {
-        var channel;
-        console.log("[STATUS] " + getUserString(user) + " --> BAN");
-        channel = client.channels.get("284837615830695936");
-        channel.send(":red_circle: " + user.username + " :hammer: ¯\\_(ツ)_/¯ :hammer:");
-    }
-});
-
-client.on("messageReactionAdd", function(reaction, user) {
-    if (reaction.message.channel.id == 308499752993947649) {
-        if (!isMod(reaction.message.guild.member(user))) {
-            if (reaction.emoji.identifier != "plus1:280230222614233088" && reaction.emoji.identifier != "minus1:280230258358222850" && reaction.emoji.identifier != "still:307857698462892032") {
-                //Remove reaction
-                reaction.remove(user);
+function memberAdd(member) {
+    var channel = null;
+    if (member.guild != null) {
+        if (settings.guilds[member.guild.id].memberAlerts != null) {
+            if (client.channels.has(settings.guilds[member.guild.id].memberAlerts)) {
+                channel = client.channels.get(settings.guilds[member.guild.id].memberAlerts);
+            } else {
+                log("Member Alerts channel " + settings.guilds[member.guild.id].memberAlerts + " not found", logType.critical);
             }
         }
-        //console.log("Reaction added: " + reaction.emoji.identifier);
     }
+
+    if (channel != null) {
+        channel.send(":arrow_right: <@" + member.user.id + ">");
+        
+        uinfo(member.user, channel, member.guild, true);
+
+        if (member.guild.id == 287937616685301762) {
+            var now = new Date();
+            var joinDate = member.user.createdAt;
+            if (joinDate.getDate() == now.getDate() && joinDate.getMonth() == now.getMonth() && joinDate.getFullYear() == now.getFullYear()) {
+                if (member.guild.id == 287937616685301762) {
+                    channel.send(":calendar: <@&326915978392764426> This member was created today.");
+                }
+            }
+        }
+    }
+}
+
+function banAdd(guild, user) {
+    var channel = null;
+    if (guild != null) {
+        if (settings.guilds[guild.id].memberAlerts != null) {
+            if (client.channels.has(settings.guilds[guild.id].memberAlerts)) {
+                channel = client.channels.get(settings.guilds[guild.id].memberAlerts);
+            } else {
+                log("Member Alerts channel " + settings.guilds[guild.id].memberAlerts + " not found", logType.critical);
+            }
+        }
+    }
+
+    if (channel != null) {
+        var embed = new Discord.RichEmbed();
+        embed.setColor("#FF0000");
+        embed.setTitle(":hammer: User Banned");
+        embed.setDescription("A user was banned from this server.");
+
+        embed.addField("User", user.tag, true);
+        embed.addField("User ID", user.id, true);
+
+        channel.send("", {embed: embed});
+    }
+}
+
+function memberRemove(member) {
+    if (member.guild != null) {
+        var channel = null;
+        if (member.guild != null) {
+            if (settings.guilds[member.guild.id].chatLogs != null) {
+                if (client.channels.has(settings.guilds[member.guild.id].memberAlerts)) {
+                    channel = client.channels.get(settings.guilds[member.guild.id].memberAlerts);
+                } else {
+                    log("Member Alerts channel " + settings.guilds[member.guild.id].memberAlerts + " not found", logType.critical);
+                }
+            }
+        }
+        
+        if (channel != null) {
+            channel.send(":arrow_left: <@" + member.user.id + "> (" + member.displayName + "#" + member.user.discriminator + ")");
+        }
+    }
+}
+
+function userUpdate(oldUser, newUser) {
+    if (newUser.username != oldUser.username) {
+        for (key in settings.guilds) {
+            var bwChannel = settings.guilds[key].botWarnings;
+            var guild = client.guilds.get(key);
+            if (bwChannel != null) {
+                //Check if member exists
+
+                for ([id, member] of guild.members) {
+                    if (member.user.id == newUser.id) {
+                        var channel = client.channels.get(bwChannel); //282513354118004747
+                        if (channel != null) {
+                            channel.send(":ab: " + getUserString(oldUser) + " :arrow_right: " + newUser.username + ".");
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+function loadPlugin(file) {
+    try {
+        if (plugins[file] != null) {
+            throw new Error("Plugin is already loaded.");
+        }
+
+        var plugin = require('./plugins/' + file);
+
+        if (plugin.name == null) {
+            throw new Error("Plugin has no name");
+        }
+
+        if (plugin.constructor == null) {
+            throw new Error("Plugin has no constructor");
+        }
+
+        plugin.constructor(client, commandEmitter, consts);
+        plugins[file] = plugin;
+        log("Plugin \"" + plugin.name + "\" from file " + file + " has been loaded successfully.", logType.good);
+        return true;
+    } catch (err) {
+        log(err.message, logType.critical);
+        log("Plugin " + file + " cannot be loaded.", logType.critical);
+        return false;
+    }
+}
+
+function unloadPlugin(file) {
+    try {
+        if (plugins[file] == null) {
+            throw new Error("Plugin not loaded");
+        }
+
+        if (plugins[file].destructor != null) {
+            plugins[file].destructor(commandEmitter);
+        }
+
+        var moduleResolve = require.resolve('./plugins/' + file);
+        //var module = require.cache[moduleResolve];
+        delete require.cache[moduleResolve];
+        delete plugins[file];
+        return true;
+    } catch (err) {
+        log(err.message, logType.critical);
+        log("Plugin " + file + " is cannot be unloaded.", logType.critical);
+        return false;
+    }
+}
+
+function vacuumSettings() {
+    if (process.argv.indexOf("--novacuum") == -1) {
+        log("Checking the AstralMod Configuration file...", logType.info);
+        fs.createReadStream('settings.json').pipe(fs.createWriteStream('.settings-backup.json'));
+
+        var changesMade = false;
+        var error = false;
+
+        //Check settings file objects
+        if (!settings.hasOwnProperty("guilds")) {
+            log("Settings does not contain guilds.", logType.critical);
+            error = true;
+        }
+
+        if (!settings.hasOwnProperty("users")) {
+            log("Settings does not contain users.", logType.critical);
+            error = true;
+        }
+
+        if (!settings.hasOwnProperty("generalConfiguration")) {
+            log("Settings does not contain general configuration.", logType.critical);
+            error = true;
+        }
+
+        if (error) {
+            //Quit AstralMod
+            log("AstralMod Configuration contains errors.", logType.critical);
+            log("From here, you can either\n- Attempt to fix the AstralMod configuration file, settings.json\n- Delete the AstralMod configuration file and start again.", logType.info);
+            log("AstralMod Configuration is corrupted. AstralMod cannot continue running. Exiting now.", logType.critical);
+            debugger;
+            process.exit(1);
+        }
+
+        //Check that each guild still exists
+        var availableGuilds = [];
+        for (let [id, guild] of client.guilds) {
+            log("Checking Discord guild " + guild.id);
+            availableGuilds.push(guild.id);
+
+            if (!settings.guilds.hasOwnProperty(guild.id)) {
+                //Add guild to database
+                changesMade = true;
+                log("Adding guild " + guild.id + " to the database.", logType.info);
+                newGuild(guild);
+            }
+        }
+
+        //Iterate over all guilds in settings
+        for (key in settings.guilds) {
+            log("Checking internal guild " + key);
+            if (!availableGuilds.includes(key)) {
+                //Delete guild from database
+                changesMade = true;
+                log("Deleting guild " + key + " as this guild is no longer recognised.", logType.info);
+                settings.guilds[key] = null;
+                delete settings.guilds[key];
+            }
+        }
+
+        if (changesMade) {
+            log("AstralMod Configuration was checked and changes were made. No other actions need to be taken.", logType.warning);
+            log("Old settings backed up as .settings-backup.json", logType.info);
+        } else {
+            fs.unlinkSync(".settings-backup.json");
+            log("AstralMod Configuration checked. No changes have been made", logType.good);
+        }
+        return true;
+    } else {
+        log("--novacuum argument was passed. Vacuuming has been disabled.", logType.info);
+        return false;
+    }
+}
+
+function guildUnavailable(guild) {
+    log(guild.id + " has become unavailable.", logType.critical);
+}
+
+function guildMemberUpdate(oldUser, newUser) {
+    if (newUser.nickname != oldUser.nickname) {
+        var guildSetting = settings.guilds[oldUser.guild.id];
+        if (guildSetting.botWarnings != null) {
+            if (oldUser.guild != null) {
+                channel = oldUser.guild.channels.get(guildSetting.botWarnings);
+                if (channel != null) {
+                    if (newUser.nickname == null) {
+                        channel.send(":abcd: " + getUserString(oldUser) + " :arrow_right: [cleared]");
+                    } else {
+                        channel.send(":abcd: " + getUserString(oldUser) + " :arrow_right: " + newUser.nickname);
+                    }
+                }
+            }
+        }
+    }
+}
+
+function readyAgain() {
+    log("AstralMod is ready again.", logType.good);
+}
+
+function resume(replayed) {
+    log("AstralMod has reconnected to Discord. " + parseInt(replayed) + " events were replayed.", logType.good);
+
+    client.setInterval(setGame, 300000);
+    setGame();
+
+    commandEmitter.emit('reconnect');
+}
+
+function countBans() {
+    banCounts = {};
+    for (let [id, guild] of client.guilds) {
+        guild.fetchBans().then(function(bans) {
+            for ([uid, user] of bans) {
+                if (banCounts[user.id] == null) {
+                    banCounts[user.id] = 1;
+                } else {
+                    banCounts[user.id]++;
+                }
+            }
+        }).catch(function() {
+            
+        });
+    }
+}
+
+function readyOnce() {
+    log("Now connected to Discord.", logType.good);
+    log("Checking if configuration file exists...");
+
+    if (!fs.existsSync("settings.json")) {
+        log("AstralMod configuration file does not exist. Creating now.", logType.warning);
+        global.settings = {
+            guilds: {
+
+            },
+            users: {
+
+            },
+            generalConfiguration: {
+
+            }
+        };
+        
+        //Load in all guilds
+        client.guilds.forEach(newGuild);
+    } else {
+        log("Loading AstralMod configuration file...", logType.info);
+
+        try {
+            var file = fs.readFileSync("settings.json", "utf8");
+
+            if (file.startsWith("{")) {
+                //File unencrypted
+                var intermediarySettings = JSON.parse(file);
+
+                log("settings.js file is unencrypted. Creating a backup copy...", logType.info);
+                fs.createReadStream('settings.json').pipe(fs.createWriteStream('.settings-beforeEncrypt.json'));
+
+                log("settings.js file will be encrypted on next save.", logType.warning);
+
+                global.settings = intermediarySettings;
+            } else {
+                //File encrypted
+                log("Decrypting the settings.js file...", logType.info);
+
+                var buf = fs.readFileSync("settings.json");
+                var cipher = crypto.createDecipher(cipherAlg, keys.settingsKey);
+                var settingsJson = Buffer.concat([cipher.update(buf), cipher.final()]);
+                settingsJson = settingsJson.toString("utf8");
+
+                global.settings = JSON.parse(settingsJson);
+            }
+
+        } catch (err) {
+            try {
+                //Try loading the prewrite file
+                var file = fs.readFileSync("settings.prewrite.json", "utf8");
+
+                if (file.startsWith("{")) {
+                    //File unencrypted
+                    var intermediarySettings = JSON.parse(file);
+
+                    log("settings.js file is unencrypted. Creating a backup copy...", logType.info);
+                    fs.createReadStream('settings.json').pipe(fs.createWriteStream('.settings-beforeEncrypt.json'));
+
+                    log("settings.js file will be encrypted on next save.", logType.warning);
+
+                    global.settings = intermediarySettings;
+                } else {
+                    //File encrypted
+                    log("Decrypting the settings.js file...", logType.info);
+
+                    var buf = fs.readFileSync("settings.json");
+                    var cipher = crypto.createDecipher(cipherAlg, keys.settingsKey);
+                    var settingsJson = Buffer.concat([cipher.update(buf), cipher.final()]);
+                    settingsJson = settingsJson.toString("utf8");
+
+                    global.settings = JSON.parse(settingsJson);
+                }
+
+                log("Settings file was corrupted, but prewrite file is good. Using prewrite file.", logType.warning);
+            
+                fs.createReadStream('settings.json').pipe(fs.createWriteStream('.settings-backup.json'));
+                fs.createReadStream('settings.prewrite.json').pipe(fs.createWriteStream('settings.json'));
+            } catch (err2) {
+                log("Either the settings file is corrupted, or the encryption key is incorrect. AstralMod cannot start.", logType.critical);
+                return;
+            }
+        }
+    }
+
+    if (vacuumSettings()) {
+        log("AstralMod Configuration loaded.", logType.good);
+    } else {
+        log("AstralMod Configuration contains errors.", logType.critical);
+    }
+
+    client.setInterval(setGame, 300000);
+    setGame();
+    
+    log("Loading suggestions channels...");
+    for (key in settings.guilds) {
+        var guildSetting = settings.guilds[key];
+        if (guildSetting != null) {
+            if (guildSetting.suggestions != null && guildSetting.suggestions != undefined) {
+                //Get all messages in #suggestions
+                var channel = client.channels.get(guildSetting.suggestions);
+                if (channel == null) {
+                    log("Suggestions channel " + guildSetting.suggestions + " not found", logType.critical);
+                } else {
+                    channel.fetchMessages({
+                        limit: 100
+                    });
+                }
+            }
+        }
+    }
+
+    //Load plugins
+    log("Loading plugins...");
+    if (!fs.existsSync("plugins/")) {
+        log("AstralMod plugins folder does not exist. Creating now.", logType.warning);
+        fs.mkdirSync("plugins/");
+    }
+
+    fs.readdirSync('plugins').forEach(function(file, index) {//Load plugin
+        log("Plugin " + file + " detected. Attempting to load now.");
+        loadPlugin(file);
+    });
+
+    commandEmitter.emit('startup');
+
+    client.on('message', processMessage);
+    client.on('guildCreate', newGuild);
+    client.on('guildDelete', removeGuild);
+    client.on('messageDelete', messageDeleted);
+    client.on('messageUpdate', messageUpdated);
+    client.on('guildMemberAdd', memberAdd);
+    client.on('guildMemberRemove', memberRemove);
+    client.on('guildUnavailable', guildUnavailable);
+    client.on('guildMemberUpdate', guildMemberUpdate);
+    client.on('userUpdate', userUpdate);
+    client.on('ready', readyAgain);
+    client.on('resume', resume);
+    client.on('guildBanAdd', banAdd);
+
+    setTimeout(saveSettings, 30000);
+
+    log("AstralMod " + amVersion + " - locked and loaded!", logType.good);
+
+    countBans();
+
+    setInterval(function() {
+        titleBox.content = "AstralMod " + amVersion + " Console  │  Uptime: " + moment.duration(client.uptime).humanize() +
+        "  │  Guilds: " + parseInt(client.guilds.size);
+        renderScreen();
+    }, 1000);
+}
+
+client.once('ready', readyOnce);
+
+client.on('disconnect', function(closeEvent) {
+    log("AstralMod has disconnected from Discord and will not attempt to reconnect.", logType.critical);
+    log("Close code: " + parseInt(closeEvent.code), logType.critical);
+    log("At this point, you'll need to restart AstralMod.", logType.critical);
+
+    commandEmitter.emit('disconnect');
+});
+client.on('reconnecting', function() {
+    log("AstralMod has disconnected from Discord and is now attempting to reconnect.", logType.warning);
+
+    commandEmitter.emit('disconnect');
 });
 
-process.on('unhandledRejection', function(err, p) {
-    console.log("[ERROR | UNCAUGHT PROMISE] " + err.stack);
-});
+if (process.argv.indexOf("--debug") == -1) {
+    log("Running AstralMod without --debug command line flag. Debug output disabled.", logType.info);
+} else {
+    //Enable debugging output from discord.js
+    
+    client.on('debug', function(info) {
+        log(info);
+    });
+    client.on('warn', function(info) {
+        log(info, logType.warning);
+    });
+}
 
-client.login(api.key).catch(function() {
-    console.log("[ERROR] Login failed.");
-});
+if (process.argv.indexOf("--httpserver") != -1) {
+    log("Initializing HTTP server");
+    var httpServer = http.createServer(function(req, res) {
+        if (req.method == "GET") {
+            if (req.url == "/") {
+                res.writeHead(200, "OK");
+                res.end(fs.readFileSync("webserver.html"));
+            } else {
+                res.writeHead(400, "Not Found");
+                res.end();
+            }
+        } else if (req.method == "POST") {
+            var body = "";
+            req.on('data', function(chunk) {
+                body += chunk;
+            });
+            req.on('end', function() {
+                var command = body;
+                textBox.setValue("> " + command);
+                textBox.submit();
+
+                res.writeHead(204, "No Content");
+                res.end();
+            });
+        }
+    });
+    httpServer.listen(28931);
+}
+
+log("Checking configuration...", logType.info);
+if (keys.settingsKey == null) {
+    log("Settings Encryption Key not found.", logType.critical);
+    log("To inform AstralMod about your settings encryption key,\n" +
+        "1. Create a file called keys.js in the same directory as AstralMod\n" +
+        "2. Save the file with the following:\n" +
+        "   exports.settingsKey = \"[a random password]\"", logType.info);
+} else {
+    log("Establishing connection to Discord...", logType.info);
+    client.options.disabledEvents = [
+        "TYPING_START"
+    ]
+    try {
+        if (keys.key != null) {
+            client.login(keys.key).catch(function() {
+                log("Couldn't establish a connection to Discord.", logType.critical);
+            });
+        } else {
+            log("Login Token not found.", logType.critical);
+            log("To inform AstralMod about your token,\n" +
+                "1. Create a file called keys.js in the same directory as AstralMod\n" +
+                "2. Save the file with the following:\n" +
+                "   exports.key = \"[your key here]\"", logType.info);
+        }
+    } catch (err) {
+        log("Login Token not found.", logType.critical);
+        log("To inform AstralMod about your token,\n" +
+            "1. Create a file called keys.js in the same directory as AstralMod\n" +
+            "2. Save the file with the following:\n" +
+            "   exports.key = \"[your key here]\"", logType.info);
+    }
+}
